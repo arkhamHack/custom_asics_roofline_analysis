@@ -1,0 +1,50 @@
+# DSA Output Mapping  (weights · V_sampled)
+#
+# Hardware story:
+#   V_sampled (B): 4×64×2 = 512 bytes → cached in GlobalBuffer, bypass DRAM
+#   Weights (A):   512×4×2 = 4 KB     → produced by score step in SRAM, bypass DRAM
+#   Output (Z):    512×64×2 = 64 KB   → written to DRAM (same as all other variants)
+#
+#   A and B both bypass DRAM because they are produced/resident in SRAM from
+#   the preceding score step — this models the two DSA GEMMs as fused in SRAM.
+#
+# Loop structure (outermost → innermost):
+#   DRAM:         M=16, N=1, K=1  — only output Z tiles written to DRAM
+#   GlobalBuffer: M=32, N=4, K=1  — weights tile + V_sampled + output tile = 8.5KB << 256KB
+#   RegisterFile: M=1,  N=1, K=64 — accumulate output row in registers
+#
+# Factor check: M=16×32×1=512✓  N=1×4×1=4✓  K=1×1×64=64✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M16 N1 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [Z]        # only output written to DRAM
+    bypass: [A, B]     # weights (from score step) and V_sampled already in SRAM
+
+  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: temporal
+    factors: M32 N4 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]  # weights tile + V_sampled (512B) + output tile (4KB) all in SRAM
+    bypass: []
+
+  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]        # accumulate output element
+    bypass: [A, B]

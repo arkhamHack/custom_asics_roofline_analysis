@@ -1,0 +1,35 @@
+# GQA QK^T: K shared across 4 query heads → 4× fewer DRAM reads for K.
+# Scores stay in GlobalBuffer. Factor check: M = 8×64 = 512 ✓  N = 8×64 = 512 ✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M8 N8 K1
+    permutation: NMK         # N (keys) outermost → maximize K tile reuse
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

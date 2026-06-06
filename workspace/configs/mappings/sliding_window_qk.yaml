@@ -1,0 +1,49 @@
+# Sliding Window QK^T Mapping
+#
+# Key property: each query row attends only to a local window of 128 keys.
+# The effective problem is M=512, N=128 (window), K=64 (head_dim).
+# Scores are kept in GlobalBuffer — only the windowed portion is computed.
+#
+# Loop structure (outermost → innermost):
+#   DRAM:         M=8, N=2   — iterate over Q tiles × window tiles
+#   GlobalBuffer: M=64, N=64 — Q tile + K window tile + score tile in SRAM
+#   RegisterFile: K=64       — full reduction accumulated in registers
+#
+# Factor check: M = 8×64×1 = 512 ✓  N = 2×64×1 = 128 ✓  K = 1×1×64 = 64 ✓
+#
+# DRAM traffic: only reads K columns within the window → ~4× less than naive
+# SRAM usage per tile: A[64,64] + B[64,64] + Z[64,64] = 24 KB < 256 KB ✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M8 N2 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]         # Q and K (windowed) from DRAM
+    bypass: [Z]            # scores stay in SRAM (like flash)
+
+  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]      # Q tile + K window tile + score tile
+    bypass: []
+
+  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

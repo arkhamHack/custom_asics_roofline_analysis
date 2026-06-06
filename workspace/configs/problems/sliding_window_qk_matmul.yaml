@@ -1,0 +1,31 @@
+# Sliding Window QK^T — reduced problem
+#
+# scores[M, N] = Q[M, K] · K_window^T[K, N]
+#   M = seq_len   = 512  (query rows)
+#   N = window    = 128  (key columns — only local window)
+#   K = head_dim  =  64  (reduction axis)
+#
+# Compared to full attention (N=512), this is 4× smaller in the key dimension.
+# DRAM traffic for scores: 512×128 = 128 KB vs 512×512 = 512 KB
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # Q matrix [M, K]
+        projection:
+          - [[M]]
+          - [[K]]
+      - name: B           # K_window matrix [N, K] (transposed, windowed)
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # scores [M, N] (windowed)
+        projection:
+          - [[M]]
+          - [[N]]
+        read_write: True
+  M: 512
+  N: 128
+  K: 64

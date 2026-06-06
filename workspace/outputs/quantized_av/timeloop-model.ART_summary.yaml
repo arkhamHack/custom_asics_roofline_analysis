@@ -1,0 +1,15 @@
+ART_summary:
+    version: '0.4'
+    table_summary:
+      - name: fpga_system.DRAM
+        area: 1.0
+        primitive_estimations: dummy
+      - name: fpga_system.GlobalBuffer
+        area: 872093.0
+        primitive_estimations: CactiSRAM
+      - name: fpga_system.RegisterFile
+        area: 145.98
+        primitive_estimations: Aladdin_table
+      - name: fpga_system.MAC
+        area: 1.0
+        primitive_estimations: dummy

@@ -1,0 +1,11 @@
+jax[cpu]>=0.4.25
+jaxlib>=0.4.25
+numpy>=1.24
+matplotlib>=3.8
+plotly>=5.18
+pandas>=2.0
+pyyaml>=6.0
+scipy>=1.11
+seaborn>=0.13
+tqdm>=4.65
+rich>=13.5

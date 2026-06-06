@@ -1,0 +1,34 @@
+# DSA score computation: Q[M,K] · K_sampled^T[K,N] → scores[M,N]
+#
+#   M = seq_len  = 512   (query tokens)
+#   N = n_points =   4   (sparse sampled key positions — NOT full seq_len)
+#   K = head_dim =  64   (reduction axis)
+#
+# This is the key DSA vs naive difference:
+#   Naive QK^T : N=512, score matrix = 512×512×2 = 512 KB DRAM
+#   DSA        : N=4,   score matrix = 512×4×2   =   4 KB DRAM  (128× reduction)
+#
+# K_sampled (B) is block means: only N=4 rows of size K=64 → 4×64×2 = 512 bytes.
+# This 512-byte table fits entirely in the RegisterFile (depth=256 words × 2B = 512B).
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # Q matrix  [M, K]  — query tokens
+        projection:
+          - [[M]]
+          - [[K]]
+      - name: B           # K_sampled [N, K]  — block means, N=n_points=4
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # scores    [M, N]  — only 4 KB, never hits DRAM
+        projection:
+          - [[M]]
+          - [[N]]
+        read_write: True
+  M: 512
+  N: 4
+  K: 64

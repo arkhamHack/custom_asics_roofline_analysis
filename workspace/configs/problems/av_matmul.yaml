@@ -1,0 +1,31 @@
+# AV GEMM — second matmul in attention
+#
+# output[M, D] = softmax(scores)[M, N] · V[N, D]
+#   M = seq_len  = 512  (output rows)
+#   N = seq_len  = 512  (reduction axis — the score columns / V rows)
+#   K = head_dim =  64  (output columns)
+#
+# Re-uses the same GEMM shape; only dimension sizes differ from qk_matmul.
+# Key: in Flash, A (scores) is never read from DRAM — it stays in SRAM.
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # softmax(scores)  [M, N]
+        projection:
+          - [[M]]
+          - [[N]]
+      - name: B           # V matrix          [N, K]  (K = head_dim)
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # output            [M, K]
+        projection:
+          - [[M]]
+          - [[K]]
+        read_write: True
+  M: 512
+  N: 512
+  K: 64

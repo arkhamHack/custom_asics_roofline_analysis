@@ -1,0 +1,60 @@
+architecture:
+    version: '0.4'
+    local:
+      - name: system.Cluster[0..7].PE[0..7].RegisterFile
+        class: regfile
+        attributes:
+            technology: "45nm"
+            depth: 256
+            width: 16
+            datawidth: 16
+            word_bits: 16
+            n_rdwr_ports: 2
+            global_cycle_seconds: 1e-09
+        area_scale: 1.0
+        energy_scale: 1.0
+      - name: system.Cluster[0..7].PE[0..7].MAC
+        class: intmac
+        attributes:
+            technology: "45nm"
+            datawidth: 16
+            word_bits: 16
+            global_cycle_seconds: 1e-09
+        area_scale: 1.0
+        energy_scale: 1.0
+      - name: system.Cluster[0..7].ClusterBuffer
+        class: SRAM
+        attributes:
+            technology: "45nm"
+            width: 128
+            depth: 1024
+            datawidth: 16
+            word_bits: 16
+            block_size: 8
+            n_rdwr_ports: 2
+            global_cycle_seconds: 1e-09
+        area_scale: 1.0
+        energy_scale: 1.0
+      - name: system.DRAM
+        class: DRAM
+        attributes:
+            type: LPDDR4
+            word_bits: 16
+            block_size: 16
+            bandwidth: 25.6
+            global_cycle_seconds: 1e-09
+        area_scale: 1.0
+        energy_scale: 1.0
+      - name: system.GlobalBuffer
+        class: SRAM
+        attributes:
+            technology: "45nm"
+            width: 256
+            depth: 32768
+            datawidth: 16
+            word_bits: 16
+            block_size: 16
+            n_rdwr_ports: 2
+            global_cycle_seconds: 1e-09
+        area_scale: 1.0
+        energy_scale: 1.0

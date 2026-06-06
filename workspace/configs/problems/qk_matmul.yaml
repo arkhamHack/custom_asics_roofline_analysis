@@ -1,0 +1,32 @@
+# QK^T GEMM — first matmul in attention
+#
+# scores[M, N] = Q[M, K] · K^T[K, N]
+#   M = seq_len  = 512  (query rows)
+#   N = seq_len  = 512  (key columns)
+#   K = head_dim =  64  (reduction axis)
+#
+# DRAM traffic analysis:
+#   Naive:  writes full scores[512×512] to DRAM → 512KB per head
+#   Flash:  scores tile stays in SRAM            → 0 DRAM writes for scores
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # Q matrix  [M, K]
+        projection:
+          - [[M]]
+          - [[K]]
+      - name: B           # K matrix  [N, K]  (K transposed) 
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # scores    [M, N]
+        projection:
+          - [[M]]
+          - [[N]]
+        read_write: True
+  M: 512
+  N: 512
+  K: 64

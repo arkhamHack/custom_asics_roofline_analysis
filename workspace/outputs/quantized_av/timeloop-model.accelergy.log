@@ -1,0 +1,111 @@
+2026-06-05 02:14:08 INFO            _                _                      
+2026-06-05 02:14:08 INFO           / \   ___ ___ ___| | ___ _ __ __ _ _   _ 
+2026-06-05 02:14:08 INFO          / _ \ / __/ __/ _ \ |/ _ \ '__/ _` | | | |
+2026-06-05 02:14:08 INFO         / ___ \ (_| (_|  __/ |  __/ | | (_| | |_| |
+2026-06-05 02:14:08 INFO        /_/   \_\___\___\___|_|\___|_|  \__, |\__, |
+2026-06-05 02:14:08 INFO                                        |___/ |___/ 
+2026-06-05 02:14:08 INFO        generating outputs according to the following specified output flags... 
+2026-06-05 02:14:08 INFO         Please use the -f flag to update the preference (default to all output files)
+2026-06-05 02:14:08 INFO        {'ERT': 1, 'ERT_summary': 1, 'ART': 1, 'ART_summary': 1, 'energy_estimation': 1, 'flattened_arch': 1}
+2026-06-05 02:14:08 INFO        Accelergy creating default config at:
+2026-06-05 02:14:08 INFO        /root/.config/accelergy/accelergy_config.yaml
+2026-06-05 02:14:08 INFO        with:
+2026-06-05 02:14:08 INFO        {'version': '0.4', 'estimator_plug_ins': ['/usr/local/share/accelergy/estimation_plug_ins'], 'primitive_components': ['/usr/local/share/accelergy/primitive_component_libs'], 'compound_components': [], 'math_functions': [], 'python_plug_ins': [], 'table_plug_ins': {'roots': ['/usr/local/share/accelergy/table_plug_ins']}}
+2026-06-05 02:14:08 INFO        Parsing file /configs/arch/fpga_like_int8.yaml for architecture info
+2026-06-05 02:14:08 WARNING     File /configs/arch/fpga_like_int8.yaml is outdated. File version is 0.3, while the latest version is 0.4. 
+2026-06-05 02:14:08 WARNING      Please update the file to the latest version.
+2026-06-05 02:14:08 WARNING     Evaluation of "LPDDR4" failed.
+2026-06-05 02:14:08 WARNING     Failed to evaluate: LPDDR4
+2026-06-05 02:14:08 WARNING     Location: arch attribute "type"
+2026-06-05 02:14:08 WARNING     Problem encountered: NameError: Name 'LPDDR4' is not defined.
+2026-06-05 02:14:08 WARNING     Available bindings: 
+2026-06-05 02:14:08 WARNING     Failed to evaluate: LPDDR4
+2026-06-05 02:14:08 WARNING     Location: arch attribute "type"
+2026-06-05 02:14:08 WARNING     Problem encountered: NameError: Name 'LPDDR4' is not defined.
+2026-06-05 02:14:08 WARNING     Please ensure that the expression used is a valid Python expression.
+2026-06-05 02:14:08 WARNING     The following may have been used in the expression:
+2026-06-05 02:14:08 WARNING     	LPDDR4 = UNDEFINED
+2026-06-05 02:14:08 WARNING     Strings are allowed here. If you meant to enter a string, please wrap the
+2026-06-05 02:14:08 WARNING     expression in single or double quotes:
+2026-06-05 02:14:08 WARNING         Found expression: LPDDR4
+2026-06-05 02:14:08 WARNING         Expression as valid string: "LPDDR4"
+2026-06-05 02:14:08 WARNING     Expression will be treated as a string. This will be deprecated in version
+2026-06-05 02:14:08 WARNING     0.4. Please wrap quotes around the expression to specify a string.
+2026-06-05 02:14:08 WARNING     No compound component classes specified, architecture can only contain primitive components
+2026-06-05 02:14:08 WARNING     Evaluation of "LPDDR4" failed.
+2026-06-05 02:14:08 WARNING     Failed to evaluate: LPDDR4
+2026-06-05 02:14:08 WARNING     Location: Architecture class DRAM attributes"type"
+2026-06-05 02:14:08 WARNING     Problem encountered: NameError: Name 'LPDDR4' is not defined.
+2026-06-05 02:14:08 WARNING     Available bindings: 
+2026-06-05 02:14:08 WARNING     Failed to evaluate: LPDDR4
+2026-06-05 02:14:08 WARNING     Location: Architecture class DRAM attributes"type"
+2026-06-05 02:14:08 WARNING     Problem encountered: NameError: Name 'LPDDR4' is not defined.
+2026-06-05 02:14:08 WARNING     Please ensure that the expression used is a valid Python expression.
+2026-06-05 02:14:08 WARNING     The following may have been used in the expression:
+2026-06-05 02:14:08 WARNING     	LPDDR4 = UNDEFINED
+2026-06-05 02:14:08 WARNING     Strings are allowed here. If you meant to enter a string, please wrap the
+2026-06-05 02:14:08 WARNING     expression in single or double quotes:
+2026-06-05 02:14:08 WARNING         Found expression: LPDDR4
+2026-06-05 02:14:08 WARNING         Expression as valid string: "LPDDR4"
+2026-06-05 02:14:08 WARNING     Expression will be treated as a string. This will be deprecated in version
+2026-06-05 02:14:08 WARNING     0.4. Please wrap quotes around the expression to specify a string.
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-table-based-plug-ins/table.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-neurosim-plugin/neurosim.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-aladdin-plug-in/aladdin.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-adc-plug-in/adc.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/accelergy-library-plugin/library.estimator.yaml
+2026-06-05 02:14:08 INFO        Estimator plug-in identified by: /usr/local/share/accelergy/estimation_plug_ins/dummy_tables/dummy.estimator.yaml
+2026-06-05 02:14:08 INFO        Loading Python plug-in: /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_wrapper.py. Errors below are likely due to plug-in, not Accelergy.
+2026-06-05 02:14:08 INFO        Getting all estimators in module <module 'python_plug_in0' from '/usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_wrapper.py'>
+2026-06-05 02:14:08 INFO        Added estimator CactiCache that estimates cache with actions idle, read, read_access, update, update_access, write, write_access, leak
+2026-06-05 02:14:08 INFO        Added estimator CactiDRAM that estimates ['DRAM', 'dram'] with actions idle, read, update, write, leak
+2026-06-05 02:14:08 INFO        Added estimator CactiSRAM that estimates ['SRAM', 'sram'] with actions idle, read, update, write, leak
+2026-06-05 02:14:08 INFO        Done loading Python plug-ins.
+2026-06-05 02:14:08 INFO        Found estimator plug-in: DEPRECATED table-based-plug-ins. Use the Library plug-in instead. (<SetsOfTables.SetsOfTables object at 0xffffaede3760>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: Neurosim Plug-In (<NeuroWrapper.NeuroWrapper object at 0xffffaee61f30>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: Aladdin_table (<AladdinTable.AladdinTable object at 0xffffaecdaef0>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: ADC Plug-In (<ADCEstimator.ADCEstimator object at 0xffffaed27d30>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: Library (<LibraryEstimator.LibraryEstimator object at 0xffffaed27700>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: dummy (<DummyTable.DummyTable object at 0xffffaeb3c220>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: CactiCache (<accelergy.plug_in_interface.estimator_wrapper.EstimatorWrapper object at 0xffffaeb3f940>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: CactiDRAM (<accelergy.plug_in_interface.estimator_wrapper.EstimatorWrapper object at 0xffffaeb3f430>)
+2026-06-05 02:14:08 INFO        Found estimator plug-in: CactiSRAM (<accelergy.plug_in_interface.estimator_wrapper.EstimatorWrapper object at 0xffffaeb3f550>)
+2026-06-05 02:14:08 WARNING     No action counts are specified as yaml input
+2026-06-05 02:14:08 INFO        
+2026-06-05 02:14:08 INFO        AREA ESTIMATION for DRAM(type=LPDDR4, workd_bits=8, block_size=16, bandwidth=25.6, global_cycle_seconds=1e-09)
+2026-06-05 02:14:08 INFO        dummy estimated 1u^2 with accuracy 1%. Messages:
+2026-06-05 02:14:08 INFO        | Multiplying by n_instances 1
+2026-06-05 02:14:08 INFO        
+2026-06-05 02:14:08 INFO        AREA ESTIMATION for SRAM(technology=45nm, width=64, depth=32768, datawidth=8, word_bits=8, block_size=8, n_rdwr_ports=2, global_cycle_seconds=1e-09)
+2026-06-05 02:14:09 INFO        CactiSRAM estimated 8.72093e-07 with accuracy 80%. Messages:
+2026-06-05 02:14:09 INFO        | Unused arguments (datawidth, word_bits, block_size, n_rdwr_ports, global_cycle_seconds) provided for ['SRAM', 'sram'].__init__. Arguments used: (technology, width, depth)
+2026-06-05 02:14:09 INFO        | Calling CACTI with cache_size=262144 n_rw_ports=1 block_size=8 tech_node_um=0.045 n_banks=1 tag_size=0 associativity=1
+2026-06-05 02:14:09 INFO        | Calling CACTI with input path /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_inputs_outputs/tmptdzxhja7
+2026-06-05 02:14:09 INFO        | CACTI output will be written to /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_inputs_outputs/tmpbevu2zv8
+2026-06-05 02:14:09 INFO        | CACTI executable not found at /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti/cacti
+2026-06-05 02:14:09 INFO        | Calling: cd /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in ; ./cacti -infile /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_inputs_outputs/tmptdzxhja7 >> /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in/cacti_inputs_outputs/tmpbevu2zv8 2>&1
+2026-06-05 02:14:09 INFO        | Cache bandwidth: 8.0 bytes/cycle
+2026-06-05 02:14:09 INFO        | Cache bandwidth: 38765559223.477394 bits/second
+2026-06-05 02:14:09 INFO        | Multiplying by n_instances 1
+2026-06-05 02:14:09 INFO        
+2026-06-05 02:14:09 INFO        AREA ESTIMATION for regfile(technology=45nm, depth=16, width=16, datawidth=8, word_bits=8, n_rdwr_ports=2, global_cycle_seconds=1e-09)
+2026-06-05 02:14:09 INFO        Aladdin_table estimated 145.98u^2 with accuracy 70%. Messages:
+2026-06-05 02:14:09 INFO        | Multiplying by n_instances 1
+2026-06-05 02:14:09 INFO        
+2026-06-05 02:14:09 INFO        AREA ESTIMATION for intmac(technology=45nm, datawidth=8, word_bits=8, global_cycle_seconds=1e-09)
+2026-06-05 02:14:09 INFO        dummy estimated 1u^2 with accuracy 1%. Messages:
+2026-06-05 02:14:09 INFO        | Multiplying by n_instances 1
+2026-06-05 02:14:09 INFO        Plug-ins provided accuracy, but failed to estimate:
+2026-06-05 02:14:09 INFO        | Aladdin_table with accuracy 70% estimating value: KeyError: 'width'
+2026-06-05 02:14:09 INFO        flattened architecture is saved to:
+2026-06-05 02:14:09 INFO        ./timeloop-model.flattened_architecture.yaml
+2026-06-05 02:14:09 INFO        energy reference table is saved to:
+2026-06-05 02:14:09 INFO        ./timeloop-model.ERT.yaml
+2026-06-05 02:14:09 INFO        energy reference table summary is saved to:
+2026-06-05 02:14:09 INFO        ./timeloop-model.ERT_summary.yaml
+2026-06-05 02:14:09 WARNING     no runtime energy estimations are generated... not generating energy_estimation.yaml
+2026-06-05 02:14:09 INFO        area reference table is saved to:
+2026-06-05 02:14:09 INFO        ./timeloop-model.ART.yaml
+2026-06-05 02:14:09 INFO        area reference table summary is saved to:
+2026-06-05 02:14:09 INFO        ./timeloop-model.ART_summary.yaml

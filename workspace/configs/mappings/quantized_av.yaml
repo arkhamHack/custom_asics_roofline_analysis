@@ -1,0 +1,35 @@
+# Quantized (INT8) AV: scores (A) inline from SRAM, only V and output touch DRAM.
+# Tile footprint: A[128,64] + B[64,2] + Z[128,2] = 8.6 KB ≤ GlobalBuffer.
+# Factor check: M = 4×128 = 512 ✓  N = 8×64 = 512 ✓  K = 1×2×32 = 64 ✓
+# RegisterFile holds Z[1,32] = 32 INT8 elements = capacity exactly.
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M4 N8 K1
+    permutation: NMK
+
+  - target: DRAM
+    type: datatype
+    keep:   [B, Z]
+    bypass: [A]
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M128 N64 K2
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K32
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

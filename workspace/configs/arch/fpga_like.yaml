@@ -1,0 +1,71 @@
+architecture:
+  version: 0.3
+
+  subtree:
+  - name: system
+
+    local:
+
+    - name: DRAM
+      class: DRAM
+      attributes:
+        type: LPDDR4
+        word_bits: 16
+        block_size: 16
+        bandwidth: 25.6
+
+    - name: GlobalBuffer
+      class: SRAM
+      attributes:
+        technology: "45nm"
+        width: 256
+        depth: 32768
+        datawidth: 16
+        word_bits: 16
+        block_size: 16
+        n_rdwr_ports: 2
+
+    subtree:
+
+    - name: Cluster[0..7]
+
+      local:
+
+      - name: ClusterBuffer
+        class: SRAM
+        attributes:
+          technology: "45nm"
+          width: 128
+          depth: 1024
+          datawidth: 16
+          word_bits: 16
+          block_size: 8
+          n_rdwr_ports: 2
+
+      subtree:
+
+      - name: PE[0..7]
+
+        local:
+
+        - name: RegisterFile
+          class: regfile
+          attributes:
+            technology: "45nm"
+            depth: 256
+            width: 16
+            datawidth: 16
+            word_bits: 16
+            n_rdwr_ports: 2
+
+        - name: MAC
+          class: intmac
+          attributes:
+            technology: "45nm"
+            datawidth: 16
+            word_bits: 16
+
+# Clock frequency: 500 MHz — representative mid-range FPGA (Xilinx UltraScale+)
+# Used to convert Timeloop cycle counts → wall-clock latency
+# latency_ms = cycles / (500e6) * 1e3
+clock_frequency_mhz: 500

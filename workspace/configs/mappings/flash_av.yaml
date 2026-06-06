@@ -1,0 +1,33 @@
+# Flash AV: scores (A) come from SRAM (computed inline, never written to DRAM).
+# Factor check: M = 8×64×1 = 512 ✓  N = 8×64×1 = 512 ✓  K = 1×1×64 = 64 ✓
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [B, Z]         # V from DRAM, output to DRAM
+    bypass: [A]            # ← KEY: scores came from SRAM, not DRAM
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

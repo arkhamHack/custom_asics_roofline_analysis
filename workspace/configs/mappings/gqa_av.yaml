@@ -1,0 +1,33 @@
+# GQA AV: V shared across query groups, stays resident in SRAM.
+# Factor check: M = 8×64 = 512 ✓  N = 8×64 = 512 ✓
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M8 N8 K1
+    permutation: NMK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

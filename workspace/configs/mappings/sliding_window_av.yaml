@@ -1,0 +1,40 @@
+# Sliding Window AV Mapping
+#
+# output[M, K] = attn_weights[M, N] · V[N, K]
+# With window=128: effective N=128 (only windowed attention weights are nonzero)
+#
+# Factor check: M = 8×64×1 = 512 ✓  N = 2×64×1 = 128 ✓  K = 1×1×64 = 64 ✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M8 N2 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]
+    bypass: [Z]
+
+  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

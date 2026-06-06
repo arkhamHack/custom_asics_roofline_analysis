@@ -1,0 +1,37 @@
+# Quantized (INT8) QK^T: flash-style, scores never hit DRAM.
+# INT8 allows 2× larger tiles: A[128,64] + B[128,64] + Z[128,128] = 32 KB ≤ GlobalBuffer.
+# Factor check: M = 4×128 = 512 ✓  N = 4×128 = 512 ✓  K = 64 ✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M4 N4 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]         # Q and K read from DRAM
+    bypass: [Z]            # ← KEY: scores NEVER written to DRAM
+
+  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: temporal
+    factors: M128 N128 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]      # Q tile + K tile + score tile all in 32KB SRAM
+    bypass: []
+
+  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]            # one INT8 accumulator per output element
+    bypass: [A, B]

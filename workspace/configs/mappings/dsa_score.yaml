@@ -1,0 +1,50 @@
+# DSA Score Mapping  (Q · K_sampled^T)
+#
+# Hardware story:
+#   K_sampled (B): 4×64×2 = 512 bytes → loaded once from DRAM, stays in GlobalBuffer
+#   Score matrix (Z): 512×4×2 = 4 KB  → fits in GlobalBuffer, NEVER written to DRAM
+#   Only Q (A) streams tile-by-tile from DRAM: 512×64×2 = 64 KB total
+#
+#   Compare to naive QK^T: 512×512×2×2 = 1 MB DRAM score traffic
+#   DSA score DRAM:                       0 KB  (128× reduction vs naive)
+#
+# Loop structure (outermost → innermost):
+#   DRAM:         M=16, N=1, K=1  — stream Q tiles; K_sampled loaded once
+#   GlobalBuffer: M=32, N=4, K=1  — Q tile (4KB) + K_sampled (512B) + scores (4KB) = 8.5KB << 256KB
+#   RegisterFile: M=1,  N=1, K=64 — full K=64 reduction in registers
+#
+# Factor check: M=16×32×1=512✓  N=1×4×1=4✓  K=1×1×64=64✓
+
+mapping:
+  # ── DRAM level ──────────────────────────────────────────────────────────
+  - target: DRAM
+    type: temporal
+    factors: M16 N1 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]     # Q and K_sampled both originate in DRAM
+    bypass: [Z]        # ← KEY: scores [512×4] NEVER written to DRAM
+
+  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: temporal
+    factors: M32 N4 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]  # Q tile + full K_sampled (512B) + score tile (4KB) all in SRAM
+    bypass: []
+
+  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]        # one accumulator per output element
+    bypass: [A, B]

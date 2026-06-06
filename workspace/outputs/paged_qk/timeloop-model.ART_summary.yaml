@@ -1,0 +1,18 @@
+ART_summary:
+    version: '0.4'
+    table_summary:
+      - name: system.Cluster[0..7].PE[0..7].RegisterFile
+        area: 4485.98
+        primitive_estimations: Aladdin_table
+      - name: system.Cluster[0..7].PE[0..7].MAC
+        area: 1.0
+        primitive_estimations: dummy
+      - name: system.Cluster[0..7].ClusterBuffer
+        area: 50649.4
+        primitive_estimations: CactiSRAM
+      - name: system.DRAM
+        area: 1.0
+        primitive_estimations: dummy
+      - name: system.GlobalBuffer
+        area: 3676350.0
+        primitive_estimations: CactiSRAM

@@ -1,0 +1,28 @@
+# Sliding Window AV — reduced problem
+#
+# output[M, K] = attn_weights[M, N] · V_window[N, K]
+#   M = seq_len   = 512  (query rows)
+#   N = window    = 128  (windowed attention positions)
+#   K = head_dim  =  64  (output dim)
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # attn_weights [M, N] (windowed)
+        projection:
+          - [[M]]
+          - [[N]]
+      - name: B           # V_window [N, K]
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # output [M, K]
+        projection:
+          - [[M]]
+          - [[K]]
+        read_write: True
+  M: 512
+  N: 128
+  K: 64

@@ -1,0 +1,33 @@
+# Naive AV: scores (A) read from DRAM — return leg of O(N²) DRAM traffic.
+# Factor check: M = 16×32×1 = 512 ✓  N = 16×32×1 = 512 ✓  K = 1×1×64 = 64 ✓
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M16 N16 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M32 N32 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B]         # score tile + V tile in SRAM
+    bypass: [Z]
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

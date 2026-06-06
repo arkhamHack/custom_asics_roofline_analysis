@@ -1,0 +1,22 @@
+ERT:
+  version: '0.4'
+  tables:
+  - name: DRAM
+    actions:
+    - { name: read,  energy: 32.00 }
+    - { name: write, energy: 32.00 }
+    - { name: idle,  energy: 0.0 }
+  - name: GlobalBuffer
+    actions:
+    - { name: read,  energy: 1.62 }
+    - { name: write, energy: 1.62 }
+    - { name: idle,  energy: 0.0 }
+  - name: RegisterFile
+    actions:
+    - { name: read,  energy: 0.24 }
+    - { name: write, energy: 0.24 }
+    - { name: idle,  energy: 0.0 }
+  - name: MAC
+    actions:
+    - { name: compute, energy: 0.07 }
+    - { name: idle,    energy: 0.0 }

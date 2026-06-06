@@ -1,0 +1,33 @@
+# DSA output: weights[M,N] · V_sampled[N,K] → output[M,K]
+#
+#   M = seq_len  = 512   (query tokens)
+#   N = n_points =   4   (sparse sampled value positions)
+#   K = head_dim =  64   (output columns)
+#
+# V_sampled (B) is block means: only N=4 rows of size K=64 → 512 bytes.
+# Same tiny footprint as K_sampled in dsa_score — register-file resident.
+#
+# Weights (A) come from the score step (already in SRAM) — bypass DRAM.
+# Output (Z) is [512×64] = 64 KB → identical to all other attention variants.
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A           # weights   [M, N]  — from score step, in SRAM
+        projection:
+          - [[M]]
+          - [[N]]
+      - name: B           # V_sampled [N, K]  — block means, N=n_points=4
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z           # output    [M, K]  — written to DRAM (same as all variants)
+        projection:
+          - [[M]]
+          - [[K]]
+        read_write: True
+  M: 512
+  N: 4
+  K: 64
