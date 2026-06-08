@@ -1,0 +1,26 @@
+# Auto-generated paged QK  M=128 N=128 page=16
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M8 N16 K1
+    permutation: MNK
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]
+    bypass: [Z]
+  - target: GlobalBuffer
+    type: temporal
+    factors: M16 N8 K1
+    permutation: MNK
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

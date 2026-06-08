@@ -1,0 +1,22 @@
+# Auto-generated QK GEMM  M=1024 N=128 K=64
+problem:
+  shape:
+    name: GEMM
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A
+        projection:
+          - [[M]]
+          - [[K]]
+      - name: B
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z
+        projection:
+          - [[M]]
+          - [[N]]
+        read_write: True
+  M: 1024
+  N: 128
+  K: 64

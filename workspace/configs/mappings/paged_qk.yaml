@@ -1,0 +1,37 @@
+# Paged attention QK^T (vLLM-style KV cache)
+#
+# Compute: flash-style — scores (Z) stay in GlobalBuffer, never hit DRAM.
+# Memory:  K loaded in 16-token pages (page_size=16) instead of one bulk stream.
+#
+# Factor check (N=512): M = 8×64 = 512  |  N = 16×32 = 512  |  K = 64
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M8 N16 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [A, B]
+    bypass: [Z]
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N32 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

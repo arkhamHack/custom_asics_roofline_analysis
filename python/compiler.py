@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -137,7 +137,7 @@ def analyze_attention_hlo(
     H: int = 8,
     N: int = 512,
     D: int = 64,
-    dtype=jnp.float16,
+    sample: Optional[Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]] = None,
     dump_dir: Path = None,
 ) -> dict:
     """
@@ -153,17 +153,23 @@ def analyze_attention_hlo(
     from python.attention.naive import naive_attention
     from python.attention.flash import flash_attention
     from python.attention.quantize import quantized_attention
+    from python.attention.paged_attention import paged_attention
+    from python.attention.moe_attention import moe_attention, make_attention_experts
 
-    sample = (
-        jnp.ones((B, H, N, D), dtype=dtype),
-        jnp.ones((B, H, N, D), dtype=dtype),
-        jnp.ones((B, H, N, D), dtype=dtype),
-    )
+    if sample is None:
+        sample = (jnp.ones((B, H, N, D)), jnp.ones((B, H, N, D)), jnp.ones((B, H, N, D)))
+    x_sample = (sample[0] + sample[1] + sample[2]) / 3.0
+    moe_w = make_attention_experts(8, H, D, jax.random.PRNGKey(0))
 
     variants = {
         "naive":     naive_attention,
         "flash":     flash_attention,
         "quantized": lambda Q, K, V: quantized_attention(Q, K, V)[0],
+        "paged":     lambda Q, K, V: paged_attention(Q, K, V)[0],
+        "moe":       lambda Q, K, V: moe_attention(
+            x_sample, moe_w[0], moe_w[1], moe_w[2], moe_w[3], moe_w[4],
+            top_k=2, is_causal=True,
+        )[0],
     }
 
     results = {}

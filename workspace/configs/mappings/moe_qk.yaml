@@ -1,0 +1,40 @@
+# Global-KV MoE QK^T
+#
+# Routing: only routed query rows (M) are computed per expert.
+# Global KV: K matrix spans full sequence (N) — every query can attend
+#            to all key positions.
+# Scores (Z) stay in SRAM (flash-style bypass).
+#
+# Default problem M=128, N=512, K=64
+# Factor check: M = 4×32 = 128  |  N = 8×64 = 512  |  K = 64
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M4 N8 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [B]
+    bypass: [A, Z]
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M32 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

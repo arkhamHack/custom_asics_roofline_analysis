@@ -1,0 +1,37 @@
+# Paged attention AV
+#
+# Compute: flash-style — scores (A) from SRAM, not DRAM.
+# Memory:  V loaded in 16-token pages instead of one bulk stream.
+#
+# Factor check (N=512): M = 8×64 = 512  |  N = 16×32 = 512  |  K = 64
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M8 N16 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [B, Z]
+    bypass: [A]
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M64 N32 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]

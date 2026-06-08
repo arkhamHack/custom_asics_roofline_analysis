@@ -1,0 +1,27 @@
+# Global-KV MoE AV — sparse queries, full-sequence values
+#
+#   M = routed_queries  (sparse output rows)
+#   N = seq_len         (global V — all tokens)
+#   K = head_dim
+
+problem:
+  shape:
+    name: "GEMM"
+    dimensions: [M, N, K]
+    data_spaces:
+      - name: A
+        projection:
+          - [[M]]
+          - [[N]]
+      - name: B
+        projection:
+          - [[N]]
+          - [[K]]
+      - name: Z
+        projection:
+          - [[M]]
+          - [[K]]
+        read_write: True
+  M: 128
+  N: 512
+  K: 64

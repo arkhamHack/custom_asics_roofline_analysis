@@ -1,11 +1,46 @@
 """JAX attention benchmark suite."""
 import time
-from dataclasses import dataclass, field
-from typing import List, Dict, Callable
+from dataclasses import dataclass
+from typing import List, Dict, Callable, Optional
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+
+# ── Shared QKV inputs ────────────────────────────────────────────────────────
+
+@dataclass
+class QKVFixture:
+    """Fixed Q/K/V tensors for fair cross-variant comparison."""
+    Q: jnp.ndarray
+    K: jnp.ndarray
+    V: jnp.ndarray
+
+    @property
+    def x(self) -> jnp.ndarray:
+        return (self.Q + self.K + self.V) / 3.0
+
+
+def make_qkv_fixtures(
+    B: int,
+    H: int,
+    D: int,
+    seq_lens: List[int],
+    key: int = 0,
+    dtype=jnp.float16,
+) -> Dict[int, QKVFixture]:
+    """One deterministic Q/K/V triple per sequence length."""
+    rng = jax.random.PRNGKey(key)
+    fixtures: Dict[int, QKVFixture] = {}
+    for N in seq_lens:
+        kq, kk, kv, rng = jax.random.split(rng, 4)
+        fixtures[N] = QKVFixture(
+            Q=jax.random.normal(kq, (B, H, N, D), dtype=dtype),
+            K=jax.random.normal(kk, (B, H, N, D), dtype=dtype),
+            V=jax.random.normal(kv, (B, H, N, D), dtype=dtype),
+        )
+    return fixtures
 
 
 # ── Result type ───────────────────────────────────────────────────────────────
@@ -23,6 +58,12 @@ class BenchmarkResult:
     dram_qkv_bytes: int
     dram_scores_bytes: int
     dram_output_bytes: int
+    # Populated when metrics come from Timeloop (see hardware_benchmark.py)
+    utilization_pct: float = 0.0
+    energy_uj: float = 0.0
+    sram_bytes: int = 0
+    metric_source: str = "host"       # "host" | "timeloop"
+    timeloop_cycles: float = 0.0
 
     @property
     def total_dram_bytes(self) -> int:
@@ -145,14 +186,18 @@ def benchmark_variant(
     fn: Callable,
     B: int, H: int, N: int, D: int,
     traffic_fn: Callable,
+    Q: Optional[jnp.ndarray] = None,
+    K: Optional[jnp.ndarray] = None,
+    V: Optional[jnp.ndarray] = None,
     dtype=jnp.float16,
     n_warmup: int = 3,
     n_runs: int = 10,
 ) -> BenchmarkResult:
     """Benchmark one attention variant at given (B, H, N, D)."""
-    Q = jax.random.normal(jax.random.PRNGKey(0), (B, H, N, D), dtype=dtype)
-    K = jax.random.normal(jax.random.PRNGKey(1), (B, H, N, D), dtype=dtype)
-    V = jax.random.normal(jax.random.PRNGKey(2), (B, H, N, D), dtype=dtype)
+    if Q is None or K is None or V is None:
+        Q = jax.random.normal(jax.random.PRNGKey(0), (B, H, N, D), dtype=dtype)
+        K = jax.random.normal(jax.random.PRNGKey(1), (B, H, N, D), dtype=dtype)
+        V = jax.random.normal(jax.random.PRNGKey(2), (B, H, N, D), dtype=dtype)
 
     def _call():
         out = fn(Q, K, V)
@@ -185,6 +230,7 @@ def run_benchmark_suite(
     H: int = 8,
     D: int = 64,
     seq_lens: List[int] = (128, 256, 512, 1024),
+    fixtures: Optional[Dict[int, QKVFixture]] = None,
     n_warmup: int = 3,
     n_runs: int = 10,
     dtype=jnp.float16,
@@ -241,11 +287,17 @@ def run_benchmark_suite(
     results = []
     for N in seq_lens:
         print(f"\n── seq_len = {N} ──────────────")
+        qkv = fixtures.get(N) if fixtures else None
+        Q = qkv.Q if qkv else None
+        K = qkv.K if qkv else None
+        V = qkv.V if qkv else None
+        run_dtype = Q.dtype if Q is not None else dtype
         for vname, fn, traffic_fn in variants:
             try:
                 r = benchmark_variant(
                     vname, fn, B, H, N, D, traffic_fn,
-                    dtype=dtype, n_warmup=n_warmup, n_runs=n_runs,
+                    Q=Q, K=K, V=V,
+                    dtype=run_dtype, n_warmup=n_warmup, n_runs=n_runs,
                 )
                 print(
                     f"  {vname:<12} latency={r.latency_ms:7.2f} ms  "

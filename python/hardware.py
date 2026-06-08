@@ -3,7 +3,7 @@ import subprocess
 import re
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -14,6 +14,24 @@ _OUTPUTS   = _WORKSPACE / "outputs"
 DOCKER_IMAGE = "timeloopaccelergy/timeloop-accelergy-pytorch:latest-arm64"
 
 FPGA_CLOCK_FREQ_GHZ = 0.5
+
+_PROBLEMS_GEN = _CONFIGS / "problems" / "generated"
+_MAPPINGS_GEN = _CONFIGS / "mappings" / "generated"
+
+MOE_TOP_K = 2
+MOE_N_EXPERTS = 8
+PAGED_PAGE_SIZE = 16
+
+# JAX attention variant → (QK^T experiment, AV experiment, problem kind)
+JAX_VARIANT_TIMELOOP: Dict[str, tuple] = {
+    "naive":          ("naive_qk",          "naive_av",          "standard"),
+    "flash":          ("flash_qk",          "flash_av",          "standard"),
+    "quantized":      ("quantized_qk",      "quantized_av",      "standard"),
+    "gqa":            ("gqa_qk",            "gqa_av",            "standard"),
+    "paged":          ("paged_qk",          "paged_av",          "paged"),
+    "sliding_window": ("sliding_window_qk", "sliding_window_av", "sliding_window"),
+    "moe":            ("moe_qk",            "moe_av",            "moe"),
+}
 
 EXPERIMENTS: Dict[str, tuple] = {
     "naive_qk": (
@@ -44,12 +62,231 @@ EXPERIMENTS: Dict[str, tuple] = {
     "gqa_av": ("arch/fpga_like.yaml", "problems/av_matmul.yaml", "mappings/gqa_av.yaml"),
     "dsa_score":  ("arch/fpga_like.yaml", "problems/dsa_score.yaml",  "mappings/dsa_score.yaml"),
     "dsa_output": ("arch/fpga_like.yaml", "problems/dsa_output.yaml", "mappings/dsa_output.yaml"),
-    "paged_qk": ("arch/fpga_like.yaml", "problems/qk_matmul.yaml", "mappings/naive_qk.yaml"),
-    "paged_av": ("arch/fpga_like.yaml", "problems/av_matmul.yaml", "mappings/naive_av.yaml"),
+    "paged_qk": ("arch/fpga_like.yaml", "problems/qk_matmul.yaml", "mappings/paged_qk.yaml"),
+    "paged_av": ("arch/fpga_like.yaml", "problems/av_matmul.yaml", "mappings/paged_av.yaml"),
+    "moe_qk": ("arch/fpga_like.yaml", "problems/moe_qk_matmul.yaml", "mappings/moe_qk.yaml"),
+    "moe_av": ("arch/fpga_like.yaml", "problems/moe_av_matmul.yaml", "mappings/moe_av.yaml"),
 }
 
 
-def run_experiment(name: str, timeout: int = 300) -> Dict:
+def _problem_kind(experiment_name: str) -> str:
+    if experiment_name.endswith("_qk") or experiment_name.endswith("_score"):
+        return "qk"
+    return "av"
+
+
+def _write_gemm_problem(
+    path: Path,
+    M: int,
+    N: int,
+    K: int,
+    kind: str,
+) -> None:
+    """Write a Timeloop GEMM problem YAML for QK or AV attention phase."""
+    if kind == "qk":
+        path.write_text(
+            f"# Auto-generated QK GEMM  M={M} N={N} K={K}\n"
+            f"problem:\n"
+            f"  shape:\n"
+            f"    name: GEMM\n"
+            f"    dimensions: [M, N, K]\n"
+            f"    data_spaces:\n"
+            f"      - name: A\n"
+            f"        projection:\n"
+            f"          - [[M]]\n"
+            f"          - [[K]]\n"
+            f"      - name: B\n"
+            f"        projection:\n"
+            f"          - [[N]]\n"
+            f"          - [[K]]\n"
+            f"      - name: Z\n"
+            f"        projection:\n"
+            f"          - [[M]]\n"
+            f"          - [[N]]\n"
+            f"        read_write: True\n"
+            f"  M: {M}\n"
+            f"  N: {N}\n"
+            f"  K: {K}\n"
+        )
+    else:
+        path.write_text(
+            f"# Auto-generated AV GEMM  M={M} N={N} K={K}\n"
+            f"problem:\n"
+            f"  shape:\n"
+            f"    name: GEMM\n"
+            f"    dimensions: [M, N, K]\n"
+            f"    data_spaces:\n"
+            f"      - name: A\n"
+            f"        projection:\n"
+            f"          - [[M]]\n"
+            f"          - [[N]]\n"
+            f"      - name: B\n"
+            f"        projection:\n"
+            f"          - [[N]]\n"
+            f"          - [[K]]\n"
+            f"      - name: Z\n"
+            f"        projection:\n"
+            f"          - [[M]]\n"
+            f"          - [[K]]\n"
+            f"        read_write: True\n"
+            f"  M: {M}\n"
+            f"  N: {N}\n"
+            f"  K: {K}\n"
+        )
+
+
+def _split_dim(dim: int, outer: int) -> Tuple[int, int]:
+    """Split dim into (outer, inner) temporal factors for Timeloop mappings."""
+    if dim % outer != 0:
+        for o in (4, 8, 16, 2):
+            if dim % o == 0:
+                outer = o
+                break
+        else:
+            return 1, dim
+    return outer, dim // outer
+
+
+def _write_paged_mapping(path: Path, M: int, N: int, K: int, phase: str, page_size: int) -> None:
+    """Page-granular DRAM tiling; flash-style SRAM for scores."""
+    m_dram, m_gb = _split_dim(M, 8)
+    n_dram, n_gb = _split_dim(N, page_size)
+    if phase == "qk":
+        dram_keep, dram_bypass = "[A, B]", "[Z]"
+        gb_keep = "[A, B, Z]"
+    else:
+        dram_keep, dram_bypass = "[B, Z]", "[A]"
+        gb_keep = "[A, B, Z]"
+    path.write_text(
+        f"# Auto-generated paged {phase.upper()}  M={M} N={N} page={page_size}\n"
+        f"mapping:\n"
+        f"  - target: DRAM\n    type: temporal\n    factors: M{m_dram} N{n_dram} K1\n    permutation: MNK\n"
+        f"  - target: DRAM\n    type: datatype\n    keep:   {dram_keep}\n    bypass: {dram_bypass}\n"
+        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M{m_gb} N{n_gb} K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: datatype\n    keep:   {gb_keep}\n    bypass: []\n"
+        f"  - target: RegisterFile\n    type: temporal\n    factors: M1 N1 K{K}\n    permutation: KMN\n"
+        f"  - target: RegisterFile\n    type: datatype\n    keep:   [Z]\n    bypass: [A, B]\n"
+    )
+
+
+def _write_moe_mapping(path: Path, M: int, N: int, K: int, phase: str) -> None:
+    """Global-KV MoE: sparse M (routed queries), full N (global K/V)."""
+    m_dram, m_gb = _split_dim(M, 4)
+    n_dram, n_gb = _split_dim(N, 8)
+    if phase == "qk":
+        dram_keep, dram_bypass = "[B]", "[A, Z]"
+    else:
+        dram_keep, dram_bypass = "[B, Z]", "[A]"
+    path.write_text(
+        f"# Auto-generated MoE {phase.upper()}  M={M} N={N} (global KV)\n"
+        f"mapping:\n"
+        f"  - target: DRAM\n    type: temporal\n    factors: M{m_dram} N{n_dram} K1\n    permutation: MNK\n"
+        f"  - target: DRAM\n    type: datatype\n    keep:   {dram_keep}\n    bypass: {dram_bypass}\n"
+        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M{m_gb} N{n_gb} K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: datatype\n    keep:   [A, B, Z]\n    bypass: []\n"
+        f"  - target: RegisterFile\n    type: temporal\n    factors: M1 N1 K{K}\n    permutation: KMN\n"
+        f"  - target: RegisterFile\n    type: datatype\n    keep:   [Z]\n    bypass: [A, B]\n"
+    )
+
+
+def _gemm_dims(
+    experiment_name: str,
+    seq_len: int,
+    head_dim: int,
+    window: Optional[int],
+    top_k: int,
+    n_experts: int,
+) -> Tuple[int, int, int]:
+    """Return (M, N, K) problem dimensions for a Timeloop experiment."""
+    if experiment_name.startswith("moe"):
+        routed_m = max(1, (seq_len * top_k) // n_experts)
+        return routed_m, seq_len, head_dim
+    if experiment_name.startswith("sliding_window"):
+        win = window if window is not None else min(128, seq_len)
+        return seq_len, win, head_dim
+    return seq_len, seq_len, head_dim
+
+
+def _resolve_problem_path(
+    experiment_name: str,
+    default_problem: str,
+    seq_len: int,
+    head_dim: int,
+    window: Optional[int] = None,
+    top_k: int = MOE_TOP_K,
+    n_experts: int = MOE_N_EXPERTS,
+) -> str:
+    """
+    Return config-relative problem path, generating YAML when N or D differ
+    from the bundled 512×64 defaults.
+    """
+    M, N, K = _gemm_dims(experiment_name, seq_len, head_dim, window, top_k, n_experts)
+    kind = _problem_kind(experiment_name)
+
+    if experiment_name.startswith("moe"):
+        if M == 128 and N == 512 and K == 64:
+            return default_problem
+    elif experiment_name.startswith("sliding_window"):
+        win = window if window is not None else min(128, seq_len)
+        if seq_len == 512 and head_dim == 64 and win == 128:
+            return default_problem
+    elif (
+        seq_len == 512
+        and head_dim == 64
+        and window is None
+        and not experiment_name.startswith("paged")
+    ):
+        return default_problem
+
+    _PROBLEMS_GEN.mkdir(parents=True, exist_ok=True)
+    tag = f"{kind}_M{M}_N{N}_K{K}"
+    out = _PROBLEMS_GEN / f"{tag}.yaml"
+    _write_gemm_problem(out, M, N, K, kind)
+    return f"problems/generated/{tag}.yaml"
+
+
+def _resolve_mapping_path(
+    experiment_name: str,
+    default_mapping: str,
+    M: int,
+    N: int,
+    K: int,
+    page_size: int = PAGED_PAGE_SIZE,
+) -> str:
+    """Return mapping path, generating YAML when dimensions differ from defaults."""
+    if experiment_name.startswith("paged"):
+        if M == 512 and N == 512 and K == 64:
+            return default_mapping
+        _MAPPINGS_GEN.mkdir(parents=True, exist_ok=True)
+        phase = "qk" if experiment_name.endswith("_qk") else "av"
+        tag = f"paged_{phase}_M{M}_N{N}_pg{page_size}"
+        out = _MAPPINGS_GEN / f"{tag}.yaml"
+        _write_paged_mapping(out, M, N, K, phase, page_size)
+        return f"mappings/generated/{tag}.yaml"
+
+    if experiment_name.startswith("moe"):
+        if M == 128 and N == 512 and K == 64:
+            return default_mapping
+        _MAPPINGS_GEN.mkdir(parents=True, exist_ok=True)
+        phase = "qk" if experiment_name.endswith("_qk") else "av"
+        tag = f"moe_{phase}_M{M}_N{N}_K{K}"
+        out = _MAPPINGS_GEN / f"{tag}.yaml"
+        _write_moe_mapping(out, M, N, K, phase)
+        return f"mappings/generated/{tag}.yaml"
+
+    return default_mapping
+
+
+def run_experiment(
+    name: str,
+    seq_len: int = 512,
+    head_dim: int = 64,
+    window: Optional[int] = None,
+    top_k: int = MOE_TOP_K,
+    n_experts: int = MOE_N_EXPERTS,
+    page_size: int = PAGED_PAGE_SIZE,
+    timeout: int = 300,
+) -> Dict:
     """
     Run one Timeloop experiment by name (must be a key in EXPERIMENTS).
 
@@ -63,7 +300,17 @@ def run_experiment(name: str, timeout: int = 300) -> Dict:
         raise ValueError(f"Unknown experiment '{name}'. Valid: {list(EXPERIMENTS)}")
 
     arch, problem, mapping = EXPERIMENTS[name]
-    output_dir = _OUTPUTS / name
+    M, N, K = _gemm_dims(name, seq_len, head_dim, window, top_k, n_experts)
+    problem = _resolve_problem_path(
+        name, problem, seq_len, head_dim, window, top_k, n_experts
+    )
+    mapping = _resolve_mapping_path(name, mapping, M, N, K, page_size)
+    run_id = f"{name}_N{seq_len}_D{head_dim}"
+    if window is not None:
+        run_id += f"_W{window}"
+    if name.startswith("moe"):
+        run_id += f"_M{M}"
+    output_dir = _OUTPUTS / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     stats_out = output_dir / "timeloop-model.stats.txt"

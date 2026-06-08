@@ -2,7 +2,9 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from python.benchmark import QKVFixture
 
 from python.sparsity import (
     compute_all_savings, print_savings_table, ComputeStats,
@@ -15,7 +17,7 @@ def run_conditional_compute(
     H: int = 8,
     N: int = 512,
     D: int = 64,
-    dtype=jnp.float32,
+    fixture: Optional[QKVFixture] = None,
 ) -> Dict:
     """
     Run all conditional compute variants and collect metrics.
@@ -32,13 +34,17 @@ def run_conditional_compute(
     from python.attention.sliding_window import sliding_window_attention
     from python.attention.paged_attention import paged_attention
     from python.attention.gqa import grouped_query_attention
-    from python.attention.moe_attention import moe_attention, make_expert_weights
+    from python.attention.moe_attention import moe_attention, make_attention_experts
 
     key = jax.random.PRNGKey(0)
-    k1, k2, k3 = jax.random.split(key, 3)
-    Q = jax.random.normal(k1, (B, H, N, D), dtype=dtype)
-    K = jax.random.normal(k2, (B, H, N, D), dtype=dtype)
-    V = jax.random.normal(k3, (B, H, N, D), dtype=dtype)
+    if fixture is not None:
+        Q, K, V, x = fixture.Q, fixture.K, fixture.V, fixture.x
+    else:
+        k1, k2, k3 = jax.random.split(key, 3)
+        Q = jax.random.normal(k1, (B, H, N, D))
+        K = jax.random.normal(k2, (B, H, N, D))
+        V = jax.random.normal(k3, (B, H, N, D))
+        x = (Q + K + V) / 3.0
 
     results = {}
 
@@ -55,9 +61,9 @@ def run_conditional_compute(
 
     gqa_results = []
     for n_kv in [1, 2, 4, H]:
-        K_gqa = jax.random.normal(k2, (B, n_kv, N, D), dtype=dtype)
-        V_gqa = jax.random.normal(k3, (B, n_kv, N, D), dtype=dtype)
-        out, stats = grouped_query_attention(Q, K_gqa, V_gqa, n_kv_heads=n_kv)
+        out, stats = grouped_query_attention(
+            Q, K[:, :n_kv], V[:, :n_kv], n_kv_heads=n_kv
+        )
         jax.block_until_ready(out)
         gqa_results.append(stats)
     results["gqa_sweep"] = gqa_results
@@ -71,9 +77,11 @@ def run_conditional_compute(
 
     moe_results = []
     for n_exp in [4, 8, 16]:
-        W1, W2, W_gate = make_expert_weights(n_exp, D, expand=4, key=key)
+        Wq, Wk, Wv, Wo, W_gate = make_attention_experts(
+            n_experts=n_exp, n_heads=H, head_dim=D, key=key
+        )
         out_moe, moe_stats_result = moe_attention(
-            Q, K, V, W1, W2, W_gate, top_k=2
+            x, Wq, Wk, Wv, Wo, W_gate, top_k=2, is_causal=True
         )
         jax.block_until_ready(out_moe)
         moe_results.append(moe_stats_result)
@@ -120,7 +128,8 @@ def print_conditional_compute_summary(results: Dict) -> None:
         print(f"  {m['n_experts']} experts, top-{m['top_k']}  "
               f"compute_saved={m['compute_saved_ratio']*100:.0f}%  "
               f"utilization={m['expert_utilization']*100:.0f}%  "
-              f"gate_entropy={m['gate_entropy']:.2f}")
+              f"gate_entropy={m['gate_entropy']:.2f}  "
+              f"L_aux={m['load_balancing_loss']:.4f}")
 
     # Visual summary
     print("\n── What Users See ──")

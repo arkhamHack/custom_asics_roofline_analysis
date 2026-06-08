@@ -1,0 +1,37 @@
+# Global-KV MoE AV
+#
+# Sparse output rows (M routed queries); V spans full sequence (N).
+# Scores (A) from SRAM — not re-read from DRAM.
+#
+# Factor check: M = 4×32 = 128  |  N = 8×64 = 512  |  K = 64
+
+mapping:
+  - target: DRAM
+    type: temporal
+    factors: M4 N8 K1
+    permutation: MNK
+
+  - target: DRAM
+    type: datatype
+    keep:   [B, Z]
+    bypass: [A]
+
+  - target: GlobalBuffer
+    type: temporal
+    factors: M32 N64 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: RegisterFile
+    type: temporal
+    factors: M1 N1 K64
+    permutation: KMN
+
+  - target: RegisterFile
+    type: datatype
+    keep:   [Z]
+    bypass: [A, B]
