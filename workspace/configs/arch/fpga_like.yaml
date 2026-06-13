@@ -1,18 +1,24 @@
 architecture:
-  version: 0.3
+  version: 0.4
 
   subtree:
   - name: system
+    attributes:
+      technology: "45nm"
+      global_cycle_seconds: 2e-9   # 500 MHz
 
     local:
 
     - name: DRAM
       class: DRAM
       attributes:
-        type: LPDDR4
+        type: "LPDDR4"
+        width: 256
         word_bits: 16
         block_size: 16
-        bandwidth: 25.6
+        read_bandwidth: 12.8
+        write_bandwidth: 12.8
+        technology: "45nm"
 
     - name: GlobalBuffer
       class: SRAM
@@ -24,6 +30,7 @@ architecture:
         word_bits: 16
         block_size: 16
         n_rdwr_ports: 2
+        n_banks: 4
 
     subtree:
 
@@ -41,6 +48,7 @@ architecture:
           word_bits: 16
           block_size: 8
           n_rdwr_ports: 2
+          n_banks: 2
 
       subtree:
 
@@ -56,6 +64,7 @@ architecture:
             width: 16
             datawidth: 16
             word_bits: 16
+            block_size: 1
             n_rdwr_ports: 2
 
         - name: MAC
@@ -63,6 +72,7 @@ architecture:
           attributes:
             technology: "45nm"
             datawidth: 16
+            width: 16
             word_bits: 16
 
 # Clock frequency: 500 MHz — representative mid-range FPGA (Xilinx UltraScale+)

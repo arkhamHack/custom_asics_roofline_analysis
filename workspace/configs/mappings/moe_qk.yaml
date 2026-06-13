@@ -1,17 +1,17 @@
-# Global-KV MoE QK^T
+# Windowed Local-KV MoE QK^T
 #
 # Routing: only routed query rows (M) are computed per expert.
-# Global KV: K matrix spans full sequence (N) — every query can attend
-#            to all key positions.
+# Windowed KV: K spans local window W=128 (NOT full sequence).
 # Scores (Z) stay in SRAM (flash-style bypass).
 #
-# Default problem M=128, N=512, K=64
-# Factor check: M = 4×32 = 128  |  N = 8×64 = 512  |  K = 64
+# Problem: M=128 (routed queries), N=128 (window), K=64
+# This is a FIXED-SIZE GEMM that does not grow with sequence length.
+# Factor check: M = 8×16 = 128  |  N = 8×16 = 128  |  K = 64
 
 mapping:
   - target: DRAM
     type: temporal
-    factors: M4 N8 K1
+    factors: M2 N2 K1
     permutation: MNK
 
   - target: DRAM
@@ -20,11 +20,31 @@ mapping:
     bypass: [A, Z]
 
   - target: GlobalBuffer
-    type: temporal
-    factors: M32 N64 K1
+    type: spatial
+    factors: M8 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
+    type: temporal
+    factors: M1 N1 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
     type: datatype
     keep:   [A, B, Z]
     bypass: []

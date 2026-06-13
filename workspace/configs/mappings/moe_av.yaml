@@ -1,14 +1,15 @@
-# Global-KV MoE AV
+# Windowed Local-KV MoE AV
 #
-# Sparse output rows (M routed queries); V spans full sequence (N).
+# Sparse output rows (M routed queries); V spans local window (N=W=128).
 # Scores (A) from SRAM — not re-read from DRAM.
+# Fixed GEMM shape: [128, 128] × [128, 64] → does NOT grow with seq_len.
 #
-# Factor check: M = 4×32 = 128  |  N = 8×64 = 512  |  K = 64
+# Factor check: M = 8×16 = 128  |  N = 8×16 = 128  |  K = 64
 
 mapping:
   - target: DRAM
     type: temporal
-    factors: M4 N8 K1
+    factors: M2 N2 K1
     permutation: MNK
 
   - target: DRAM
@@ -17,14 +18,34 @@ mapping:
     bypass: [A]
 
   - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
     type: temporal
-    factors: M32 N64 K1
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
     type: datatype
     keep:   [A, B, Z]
     bypass: []
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
 
   - target: RegisterFile
     type: temporal

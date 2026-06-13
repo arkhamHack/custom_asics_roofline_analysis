@@ -1,5 +1,6 @@
 # Flash AV: scores (A) come from SRAM (computed inline, never written to DRAM).
-# Factor check: M = 8×64×1 = 512 ✓  N = 8×64×1 = 512 ✓  K = 1×1×64 = 64 ✓
+# Spatial: 8 clusters (M) × 8 PEs (N) = 64 MACs active simultaneously.
+# Factor check: M = 8×8×8×1×1 = 512 ✓  N = 8×1×8×8×1 = 512 ✓  K = 64 ✓
 
 mapping:
   - target: DRAM
@@ -13,14 +14,34 @@ mapping:
     bypass: [A]            # ← KEY: scores came from SRAM, not DRAM
 
   - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
     type: temporal
-    factors: M64 N64 K1
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
     type: datatype
     keep:   [A, B, Z]
     bypass: []
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
 
   - target: RegisterFile
     type: temporal

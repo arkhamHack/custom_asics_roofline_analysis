@@ -24,7 +24,6 @@ PAGED_PAGE_SIZE = 16
 
 # JAX attention variant → (QK^T experiment, AV experiment, problem kind)
 JAX_VARIANT_TIMELOOP: Dict[str, tuple] = {
-    "naive":          ("naive_qk",          "naive_av",          "standard"),
     "flash":          ("flash_qk",          "flash_av",          "standard"),
     "quantized":      ("quantized_qk",      "quantized_av",      "standard"),
     "gqa":            ("gqa_qk",            "gqa_av",            "standard"),
@@ -34,20 +33,10 @@ JAX_VARIANT_TIMELOOP: Dict[str, tuple] = {
 }
 
 EXPERIMENTS: Dict[str, tuple] = {
-    "naive_qk": (
-        "arch/fpga_like.yaml",
-        "problems/qk_matmul.yaml",
-        "mappings/naive_qk.yaml",
-    ),
     "flash_qk": (
         "arch/fpga_like.yaml",
         "problems/qk_matmul.yaml",
         "mappings/flash_qk.yaml",
-    ),
-    "naive_av": (
-        "arch/fpga_like.yaml",
-        "problems/av_matmul.yaml",
-        "mappings/naive_av.yaml",
     ),
     "flash_av": (
         "arch/fpga_like.yaml",
@@ -148,45 +137,137 @@ def _split_dim(dim: int, outer: int) -> Tuple[int, int]:
 
 
 def _write_paged_mapping(path: Path, M: int, N: int, K: int, phase: str, page_size: int) -> None:
-    """Page-granular DRAM tiling; flash-style SRAM for scores."""
-    m_dram, m_gb = _split_dim(M, 8)
-    n_dram, n_gb = _split_dim(N, page_size)
+    """Page-granular DRAM tiling; flash-style SRAM for scores; 8×8 spatial PE array."""
+    m_cluster, m_cb, m_dram, n_pe, n_cb, n_dram = _spatial_splits(M, N)
     if phase == "qk":
         dram_keep, dram_bypass = "[A, B]", "[Z]"
-        gb_keep = "[A, B, Z]"
     else:
         dram_keep, dram_bypass = "[B, Z]", "[A]"
-        gb_keep = "[A, B, Z]"
     path.write_text(
         f"# Auto-generated paged {phase.upper()}  M={M} N={N} page={page_size}\n"
+        f"# Spatial: {m_cluster} clusters × {n_pe} PEs = {m_cluster * n_pe} MACs active\n"
         f"mapping:\n"
         f"  - target: DRAM\n    type: temporal\n    factors: M{m_dram} N{n_dram} K1\n    permutation: MNK\n"
         f"  - target: DRAM\n    type: datatype\n    keep:   {dram_keep}\n    bypass: {dram_bypass}\n"
-        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M{m_gb} N{n_gb} K1\n    permutation: MNK\n"
-        f"  - target: GlobalBuffer\n    type: datatype\n    keep:   {gb_keep}\n    bypass: []\n"
+        f"  - target: GlobalBuffer\n    type: spatial\n    factors: M{m_cluster} N1 K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M1 N1 K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: datatype\n    keep:   [A, B, Z]\n    bypass: []\n"
+        f"  - target: ClusterBuffer\n    type: spatial\n    factors: M1 N{n_pe} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: temporal\n    factors: M{m_cb} N{n_cb} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: datatype\n    keep:   [A, B, Z]\n    bypass: []\n"
         f"  - target: RegisterFile\n    type: temporal\n    factors: M1 N1 K{K}\n    permutation: KMN\n"
         f"  - target: RegisterFile\n    type: datatype\n    keep:   [Z]\n    bypass: [A, B]\n"
     )
 
 
 def _write_moe_mapping(path: Path, M: int, N: int, K: int, phase: str) -> None:
-    """Global-KV MoE: sparse M (routed queries), full N (global K/V)."""
-    m_dram, m_gb = _split_dim(M, 4)
-    n_dram, n_gb = _split_dim(N, 8)
+    """Windowed Local-KV MoE: sparse M (routed queries), windowed N (local keys); 8×8 spatial PE array.
+    
+    N here is the window size W (constant), NOT the full sequence length.
+    This gives the hardware a fixed-size GEMM [M_e, W] that does not grow
+    with sequence length — enabling O(N_seq) total latency scaling.
+    """
+    m_cluster, m_cb, m_dram, n_pe, n_cb, n_dram = _spatial_splits(M, N)
     if phase == "qk":
         dram_keep, dram_bypass = "[B]", "[A, Z]"
     else:
         dram_keep, dram_bypass = "[B, Z]", "[A]"
     path.write_text(
-        f"# Auto-generated MoE {phase.upper()}  M={M} N={N} (global KV)\n"
+        f"# Auto-generated MoE {phase.upper()}  M={M} N={N} (local KV window)\n"
+        f"# Spatial: {m_cluster} clusters × {n_pe} PEs = {m_cluster * n_pe} MACs active\n"
         f"mapping:\n"
         f"  - target: DRAM\n    type: temporal\n    factors: M{m_dram} N{n_dram} K1\n    permutation: MNK\n"
         f"  - target: DRAM\n    type: datatype\n    keep:   {dram_keep}\n    bypass: {dram_bypass}\n"
-        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M{m_gb} N{n_gb} K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: spatial\n    factors: M{m_cluster} N1 K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M1 N1 K1\n    permutation: MNK\n"
         f"  - target: GlobalBuffer\n    type: datatype\n    keep:   [A, B, Z]\n    bypass: []\n"
+        f"  - target: ClusterBuffer\n    type: spatial\n    factors: M1 N{n_pe} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: temporal\n    factors: M{m_cb} N{n_cb} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: datatype\n    keep:   [A, B, Z]\n    bypass: []\n"
         f"  - target: RegisterFile\n    type: temporal\n    factors: M1 N1 K{K}\n    permutation: KMN\n"
         f"  - target: RegisterFile\n    type: datatype\n    keep:   [Z]\n    bypass: [A, B]\n"
     )
+
+
+# fpga_like.yaml spatial dimensions (Cluster[0..7] × PE[0..7] = 64 MACs).
+_N_CLUSTER = 8
+_N_PE      = 8
+
+# Per-variant configuration for the DRAM→GB→{Cluster spatial}→CB→{PE spatial}→RF
+# mapping used by naive, flash, gqa, and sliding_window on fpga_like.yaml.
+# cb_keep/cb_bp mirror g_keep/g_bp so data stays in the same SRAM hierarchy.
+_STANDARD_MAP_CFG: Dict[str, dict] = {
+    "flash_qk":          dict(d_perm="MNK", d_keep="[A, B]",    d_bp="[Z]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "flash_av":          dict(d_perm="MNK", d_keep="[B, Z]",    d_bp="[A]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "quantized_qk":      dict(d_perm="MNK", d_keep="[A, B]",    d_bp="[Z]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "quantized_av":      dict(d_perm="NMK", d_keep="[B, Z]",    d_bp="[A]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "gqa_qk":            dict(d_perm="NMK", d_keep="[A, B]",    d_bp="[Z]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "gqa_av":            dict(d_perm="NMK", d_keep="[B, Z]",    d_bp="[A]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "sliding_window_qk": dict(d_perm="MNK", d_keep="[A, B]",    d_bp="[Z]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+    "sliding_window_av": dict(d_perm="MNK", d_keep="[A, B]",    d_bp="[Z]", g_keep="[A, B, Z]", g_bp="[]",   cb_keep="[A, B, Z]", cb_bp="[]"),
+}
+
+
+def _tile_first(dim: int, preferred_tile: int) -> Tuple[int, int]:
+    """Return (outer_count, tile) where outer_count × tile == dim, tile <= preferred_tile."""
+    if dim <= preferred_tile:
+        return 1, dim
+    if dim % preferred_tile == 0:
+        return dim // preferred_tile, preferred_tile
+    for t in range(preferred_tile - 1, 0, -1):
+        if dim % t == 0:
+            return dim // t, t
+    return 1, dim  # unreachable for positive dim
+
+
+def _spatial_splits(M: int, N: int) -> Tuple[int, int, int, int, int, int]:
+    """
+    Return (m_cluster, m_cb, m_dram, n_pe, n_cb, n_dram) for fpga_like.yaml such that:
+        m_dram × m_cluster(spatial) × m_cb = M
+        n_dram × n_pe(spatial)     × n_cb = N
+    Reduces the spatial factor if M/N are not divisible by 8.
+    """
+    m_cluster = _N_CLUSTER
+    while m_cluster > 1 and M % m_cluster != 0:
+        m_cluster -= 1
+    m_dram, m_cb = _tile_first(M // m_cluster, 8)
+
+    n_pe = _N_PE
+    while n_pe > 1 and N % n_pe != 0:
+        n_pe -= 1
+    n_dram, n_cb = _tile_first(N // n_pe, 8)
+
+    return m_cluster, m_cb, m_dram, n_pe, n_cb, n_dram
+
+
+def _write_standard_mapping(path: Path, M: int, N: int, K: int, cfg: dict) -> None:
+    """Write a mapping with 8-cluster × 8-PE spatial parallelism (fpga_like.yaml)."""
+    m_cluster, m_cb, m_dram, n_pe, n_cb, n_dram = _spatial_splits(M, N)
+    path.write_text(
+        f"# Auto-generated mapping  M={M} N={N} K={K}\n"
+        f"# Spatial: {m_cluster} clusters × {n_pe} PEs = {m_cluster * n_pe} MACs active\n"
+        f"mapping:\n"
+        f"  - target: DRAM\n    type: temporal\n    factors: M{m_dram} N{n_dram} K1\n    permutation: {cfg['d_perm']}\n"
+        f"  - target: DRAM\n    type: datatype\n    keep:   {cfg['d_keep']}\n    bypass: {cfg['d_bp']}\n"
+        f"  - target: GlobalBuffer\n    type: spatial\n    factors: M{m_cluster} N1 K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: temporal\n    factors: M1 N1 K1\n    permutation: MNK\n"
+        f"  - target: GlobalBuffer\n    type: datatype\n    keep:   {cfg['g_keep']}\n    bypass: {cfg['g_bp']}\n"
+        f"  - target: ClusterBuffer\n    type: spatial\n    factors: M1 N{n_pe} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: temporal\n    factors: M{m_cb} N{n_cb} K1\n    permutation: MNK\n"
+        f"  - target: ClusterBuffer\n    type: datatype\n    keep:   {cfg['cb_keep']}\n    bypass: {cfg['cb_bp']}\n"
+        f"  - target: RegisterFile\n    type: temporal\n    factors: M1 N1 K{K}\n    permutation: KMN\n"
+        f"  - target: RegisterFile\n    type: datatype\n    keep:   [Z]\n    bypass: [A, B]\n"
+    )
+
+
+def _write_quantized_qk_mapping(path: Path, M: int, N: int, K: int) -> None:
+    """Write INT8 flash-style QK mapping using the 8×8 PE hierarchy."""
+    _write_standard_mapping(path, M, N, K, _STANDARD_MAP_CFG["quantized_qk"])
+
+
+def _write_quantized_av_mapping(path: Path, M: int, N: int, K: int) -> None:
+    """Write INT8 AV mapping using the 8×8 PE hierarchy."""
+    _write_standard_mapping(path, M, N, K, _STANDARD_MAP_CFG["quantized_av"])
 
 
 def _gemm_dims(
@@ -200,7 +281,11 @@ def _gemm_dims(
     """Return (M, N, K) problem dimensions for a Timeloop experiment."""
     if experiment_name.startswith("moe"):
         routed_m = max(1, (seq_len * top_k) // n_experts)
-        return routed_m, seq_len, head_dim
+        # Windowed Local-KV MoE: N dimension is the window size (constant),
+        # not the full sequence length. This gives O(N) total complexity
+        # because the per-expert GEMM is [M_e, W] not [M_e, seq_len].
+        moe_window = window if window is not None else min(128, seq_len)
+        return routed_m, moe_window, head_dim
     if experiment_name.startswith("sliding_window"):
         win = window if window is not None else min(128, seq_len)
         return seq_len, win, head_dim
@@ -224,7 +309,7 @@ def _resolve_problem_path(
     kind = _problem_kind(experiment_name)
 
     if experiment_name.startswith("moe"):
-        if M == 128 and N == 512 and K == 64:
+        if M == 128 and N == 128 and K == 64:
             return default_problem
     elif experiment_name.startswith("sliding_window"):
         win = window if window is not None else min(128, seq_len)
@@ -265,7 +350,7 @@ def _resolve_mapping_path(
         return f"mappings/generated/{tag}.yaml"
 
     if experiment_name.startswith("moe"):
-        if M == 128 and N == 512 and K == 64:
+        if M == 128 and N == 128 and K == 64:
             return default_mapping
         _MAPPINGS_GEN.mkdir(parents=True, exist_ok=True)
         phase = "qk" if experiment_name.endswith("_qk") else "av"
@@ -274,7 +359,61 @@ def _resolve_mapping_path(
         _write_moe_mapping(out, M, N, K, phase)
         return f"mappings/generated/{tag}.yaml"
 
-    return default_mapping
+    # Standard variants: naive, flash, gqa, sliding_window, quantized.
+    # Default problem dimensions are M=512, N=512, K=64 for most;
+    # sliding_window defaults to M=512, N=128 (window), K=64.
+    default_N = 128 if experiment_name.startswith("sliding_window") else 512
+    if M == 512 and N == default_N and K == 64:
+        return default_mapping
+
+    _MAPPINGS_GEN.mkdir(parents=True, exist_ok=True)
+    tag = f"{experiment_name}_M{M}_N{N}_K{K}"
+    out = _MAPPINGS_GEN / f"{tag}.yaml"
+    if experiment_name == "quantized_qk":
+        _write_quantized_qk_mapping(out, M, N, K)
+    elif experiment_name == "quantized_av":
+        _write_quantized_av_mapping(out, M, N, K)
+    elif experiment_name in _STANDARD_MAP_CFG:
+        _write_standard_mapping(out, M, N, K, _STANDARD_MAP_CFG[experiment_name])
+    else:
+        return default_mapping  # dsa / unknown — static mapping only
+    return f"mappings/generated/{tag}.yaml"
+
+
+def _ert_has_tables(ert_path: Path) -> bool:
+    """Return True if the ERT YAML exists and contains at least one table entry."""
+    if not ert_path.exists():
+        return False
+    try:
+        import yaml
+        data = yaml.safe_load(ert_path.read_text())
+        tables = (data or {}).get("ERT", {}).get("tables", [])
+        return bool(tables)
+    except Exception:
+        return False
+
+
+def _resolve_ert(output_dir: Path, experiment_name: str) -> Optional[Path]:
+    """
+    Return a valid ERT path to pass to timeloop-model, or None to let
+    Accelergy regenerate it.
+
+    Priority:
+      1. Local ERT (output_dir/timeloop-model.ERT.yaml) if tables are non-empty.
+      2. ERT from the bare-name output dir (e.g. outputs/gqa_qk/) for the same
+         experiment — its tables are valid and architecture-identical.
+    """
+    local_ert = output_dir / "timeloop-model.ERT.yaml"
+    if _ert_has_tables(local_ert):
+        return local_ert
+
+    # Fallback: bare experiment name dir (created by older code without _N_D suffix)
+    base_dir = _OUTPUTS / experiment_name
+    base_ert = base_dir / "timeloop-model.ERT.yaml"
+    if _ert_has_tables(base_ert):
+        return base_ert
+
+    return None
 
 
 def run_experiment(
@@ -296,6 +435,9 @@ def run_experiment(
         sram_reads_bytes, sram_writes_bytes,
         name
     """
+    import shutil
+    import tempfile
+
     if name not in EXPERIMENTS:
         raise ValueError(f"Unknown experiment '{name}'. Valid: {list(EXPERIMENTS)}")
 
@@ -305,55 +447,55 @@ def run_experiment(
         name, problem, seq_len, head_dim, window, top_k, n_experts
     )
     mapping = _resolve_mapping_path(name, mapping, M, N, K, page_size)
-    run_id = f"{name}_N{seq_len}_D{head_dim}"
-    if window is not None:
-        run_id += f"_W{window}"
-    if name.startswith("moe"):
-        run_id += f"_M{M}"
-    output_dir = _OUTPUTS / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    stats_out = output_dir / "timeloop-model.stats.txt"
-    if stats_out.exists():
-        stats_out.unlink()
+    # ERT is cached per-experiment-name (not per seq_len) in a permanent base dir.
+    # All seq_len variants of the same experiment share the same hardware arch,
+    # Pre-computed ERT bypasses Accelergy entirely (broken in this Docker image).
+    # Timeloop still produces correct cycle counts, DRAM traffic, and utilization.
+    _prebuilt_ert = _CONFIGS / "timeloop-model.ERT.yaml"
 
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{_CONFIGS.resolve()}:/configs:ro",
-        "-v", f"{output_dir.resolve()}:/output",
-        "-w", "/output",
-        DOCKER_IMAGE,
-        "timeloop-model",
-        f"/configs/{arch}",
-        f"/configs/{problem}",
-        f"/configs/{mapping}",
-    ]
+    # Run Timeloop in a throw-away temp directory — no per-seq-len folders accumulate.
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
 
-    ert_file = output_dir / "timeloop-model.ERT.yaml"
-    if ert_file.exists():
-        cmd.append("/output/timeloop-model.ERT.yaml")
+        # Always supply the pre-built ERT so Timeloop skips Accelergy.
+        shutil.copy2(_prebuilt_ert, tmp / "timeloop-model.ERT.yaml")
 
-    print(f"[timeloop] Running '{name}' …")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{_CONFIGS.resolve()}:/configs:ro",
+            "-v", f"{tmp.resolve()}:/output",
+            "-w", "/output",
+            DOCKER_IMAGE,
+            "timeloop-model",
+            f"/configs/{arch}",
+            f"/configs/{problem}",
+            f"/configs/{mapping}",
+            "/output/timeloop-model.ERT.yaml",
+        ]
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"timeloop-model failed for '{name}'.\n"
-            f"STDOUT:\n{result.stdout[-3000:]}\n"
-            f"STDERR:\n{result.stderr[-3000:]}"
-        )
+        print(f"[timeloop] Running '{name}' …")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
-    stats_file = output_dir / "timeloop-model.stats.txt"
-    if not stats_file.exists():
-        candidates = list(output_dir.glob("*.stats.txt"))
-        if not candidates:
-            raise FileNotFoundError(
-                f"No stats file produced by Timeloop in {output_dir}.\n"
-                f"stdout: {result.stdout[-2000:]}"
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"timeloop-model failed for '{name}'.\n"
+                f"STDOUT:\n{result.stdout[-3000:]}\n"
+                f"STDERR:\n{result.stderr[-3000:]}"
             )
-        stats_file = candidates[0]
 
-    stats = _parse_stats(stats_file)
+        stats_file = tmp / "timeloop-model.stats.txt"
+        if not stats_file.exists():
+            candidates = list(tmp.glob("*.stats.txt"))
+            if not candidates:
+                raise FileNotFoundError(
+                    f"No stats file produced by Timeloop for '{name}'.\n"
+                    f"stdout: {result.stdout[-2000:]}"
+                )
+            stats_file = candidates[0]
+
+        stats = _parse_stats(stats_file)
+
     stats["name"] = name
     return stats
 
@@ -378,15 +520,20 @@ def _parse_stats(stats_file: Path) -> Dict:
     text = stats_file.read_text()
     stats: Dict = {}
 
+    # Scalar metrics live in the "Summary Stats" section at the end of the file.
+    # Searching the full text would match per-level lines first (e.g.
+    # "Min utilization : 0.00" before "Utilization: 1.56%" in Summary Stats).
+    summary_start = text.find("Summary Stats")
+    summary = text[summary_start:] if summary_start != -1 else text
 
-    _extract_scalar(text, stats, "cycles",
+    _extract_scalar(summary, stats, "cycles",
                     r"Cycles\s*:\s*([\d,]+)")
-    _extract_scalar(text, stats, "utilization",
+    _extract_scalar(summary, stats, "utilization",
                     r"Utilization\s*:\s*([\d.]+)")
-    _extract_scalar(text, stats, "energy_uj",
+    _extract_scalar(summary, stats, "energy_uj",
                     r"Energy\s*:\s*([\d.eE+\-]+)\s*uJ")
-    _extract_scalar(text, stats, "gflops",
-                    r"GFLOPs?\s*:\s*([\d.eE+\-]+)")
+    _extract_scalar(summary, stats, "gflops",
+                    r"GFLOPs?[^:]*:\s*([\d.eE+\-]+)")
 
 
     dram_reads  = _sum_level_stat(text, "DRAM", "Reads")

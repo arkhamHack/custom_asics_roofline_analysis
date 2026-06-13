@@ -17,18 +17,36 @@ mapping:
     keep:   [A, B]
     bypass: [Z]
 
-  # ── GlobalBuffer level ──────────────────────────────────────────────────
+  - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
+
   - target: GlobalBuffer
     type: temporal
-    factors: M64 N64 K1
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
     type: datatype
+    keep:   [A, B, Z]      # Q tile + K window tile + score tile
+    bypass: []
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
     keep:   [A, B, Z]
     bypass: []
 
-  # ── RegisterFile level ──────────────────────────────────────────────────
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
+
   - target: RegisterFile
     type: temporal
     factors: M1 N1 K64

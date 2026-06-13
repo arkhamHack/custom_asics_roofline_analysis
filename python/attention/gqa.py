@@ -37,19 +37,30 @@ def grouped_query_attention(
 
     # Expand KV heads to match Q heads by repeating
     # K: [B, H_kv, N, D] → [B, H_kv, 1, N, D] → [B, H_kv, group_size, N, D] → [B, H_q, N, D]
-    K_expanded = jnp.repeat(K, group_size, axis=1)  # [B, H_q, N, D]
-    V_expanded = jnp.repeat(V, group_size, axis=1)  # [B, H_q, N, D]
-
+    # K_expanded = jnp.repeat(K, group_size, axis=1)  # [B, H_q, N, D]
+    # V_expanded = jnp.repeat(V, group_size, axis=1)  # [B, H_q, N, D]
+    Q_grouped = Q.reshape(B,H_kv,group_size,N,D)
     # Standard attention
-    scores = jnp.einsum("bhid,bhjd->bhij", Q, K_expanded) * scale
-
+    scores = jnp.einsum("bhgnd,bhmd->bhgnm", Q_grouped, K) * scale
     if is_causal:
-        causal_mask = jnp.tril(jnp.ones((N, N), dtype=jnp.bool_))
-        scores = jnp.where(causal_mask[None, None, :, :], scores, jnp.finfo(scores.dtype).min)
+        mask = jnp.tril(
+            jnp.ones((N, N), dtype=jnp.bool_)
+        )
+        scores = jnp.where(
+            mask[None, None, None, :, :],
+            scores,
+            jnp.finfo(scores.dtype).min,
+        )
 
-    attn_weights = jax.nn.softmax(scores, axis=-1)
-    output = jnp.einsum("bhij,bhjd->bhid", attn_weights, V_expanded)
+    attn = jax.nn.softmax(scores, axis=-1)
 
+    output = jnp.einsum(
+        "bhgnm,bhmd->bhgnd",
+        attn,
+        V,
+    )
+
+    output = output.reshape(B,H_q,N,D)
     # KV cache savings
     mha_kv_bytes = 2 * B * H_q * N * D * 2   # K + V, FP16
     gqa_kv_bytes = 2 * B * H_kv * N * D * 2

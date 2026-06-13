@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 _COLORS = {
-    "naive":        "#E74C3C",
     "flash":        "#2ECC71",
     "quantized":    "#3498DB",
     "dsa":         "#9B59B6",
@@ -30,7 +29,9 @@ def roofline_plot(
     X-axis: arithmetic intensity (FLOP / DRAM byte)
     Y-axis: performance (GFLOP/s)
     """
-    ai_range = np.logspace(-2, 3, 500)
+    x_min, x_max = 1e-2, 1e3
+    y_min, y_max = 0.1, hw_peak_flops_gflops * 2
+    ai_range = np.logspace(np.log10(x_min), np.log10(x_max), 500)
     memory_roof = hw_peak_bw_gb_s * ai_range
     compute_roof = np.full_like(ai_range, hw_peak_flops_gflops)
     roofline = np.minimum(memory_roof, compute_roof)
@@ -49,7 +50,15 @@ def roofline_plot(
 
     grouped: Dict[str, list] = {v: [] for v in _VARIANT_ORDER}
     for r in benchmark_results:
-        if r.name in grouped and r.seq_len in seq_lens_to_label:
+        ai = getattr(r, "arithmetic_intensity", None)
+        perf = getattr(r, "throughput_gflops", None)
+        if (
+            r.name in grouped
+            and r.seq_len in seq_lens_to_label
+            and ai is not None and perf is not None
+            and np.isfinite(ai) and np.isfinite(perf)
+            and ai > 0 and perf > 0
+        ):
             grouped[r.name].append(r)
 
     for vname in _VARIANT_ORDER:
@@ -58,20 +67,30 @@ def roofline_plot(
             continue
         xs = [r.arithmetic_intensity for r in pts]
         ys = [r.throughput_gflops for r in pts]
-        labels = [f"N={r.seq_len}" for r in pts]
+        labels = [f"{vname}<br>N={r.seq_len}<br>AI={r.arithmetic_intensity:.1f} F/B<br>{r.throughput_gflops:.1f} GFLOP/s" for r in pts]
         fig.add_trace(go.Scatter(
             x=xs, y=ys,
-            mode="markers+text",
+            mode="markers",
             name=vname,
             text=labels,
-            textposition="top center",
+            hovertemplate="%{text}<extra></extra>",
             marker=dict(color=_COLORS[vname], size=12, symbol="circle"),
         ))
 
     fig.update_layout(
         title="Roofline: Attention Variants on FPGA-like Hardware",
-        xaxis=dict(title="Arithmetic Intensity (FLOP / DRAM byte)", type="log"),
-        yaxis=dict(title="Performance (GFLOP/s)", type="log"),
+        xaxis=dict(
+            title="Arithmetic Intensity (FLOP / DRAM byte)",
+            type="log",
+            range=[np.log10(x_min), np.log10(x_max)],
+            tickformat="~g",
+        ),
+        yaxis=dict(
+            title="Performance (GFLOP/s)",
+            type="log",
+            range=[np.log10(y_min), np.log10(y_max)],
+            tickformat="~g",
+        ),
         legend=dict(x=0.01, y=0.99),
         template="plotly_white",
         width=800, height=500,
@@ -84,14 +103,14 @@ def roofline_plot(
         annotation_position="top right",
     )
     fig.add_annotation(
-        x=np.log10(ridge_point / 4), y=np.log10(hw_peak_flops_gflops * 0.7),
-        text="← Memory Bound", showarrow=False,
+        x=ridge_point / 4, y=hw_peak_flops_gflops * 0.45,
+        text="Memory-bound", showarrow=False,
         font=dict(size=12, color="blue"),
         xref="x", yref="y",
     )
     fig.add_annotation(
-        x=np.log10(ridge_point * 4), y=np.log10(hw_peak_flops_gflops * 0.7),
-        text="Compute Bound →", showarrow=False,
+        x=ridge_point * 4, y=hw_peak_flops_gflops * 0.45,
+        text="Compute-bound", showarrow=False,
         font=dict(size=12, color="red"),
         xref="x", yref="y",
     )
@@ -106,13 +125,27 @@ def dram_traffic_plot(benchmark_results) -> go.Figure:
     (QKV reads, scores r/w, output write) per variant at each sequence length.
     """
     seq_lens = sorted({r.seq_len for r in benchmark_results})
+    if not seq_lens:
+        fig = go.Figure()
+        fig.update_layout(title="DRAM Traffic Breakdown (no data)")
+        return fig
     fig = make_subplots(
-        rows=1, cols=len(seq_lens),
+        rows=1, cols=max(1, len(seq_lens)),
         subplot_titles=[f"N = {n}" for n in seq_lens],
         shared_yaxes=True,
     )
 
-    component_labels = ["QKV reads", "Scores traffic", "Output write"]
+    component_labels = ["QKV reads", "Score/intermediate spill", "Output write"]
+    component_patterns = {
+        "QKV reads": "",
+        "Score/intermediate spill": "/",
+        "Output write": "x",
+    }
+    component_opacity = {
+        "QKV reads": 0.45,
+        "Score/intermediate spill": 0.85,
+        "Output write": 0.65,
+    }
 
     for col_idx, N in enumerate(seq_lens, start=1):
         for vname in _VARIANT_ORDER:
@@ -128,22 +161,41 @@ def dram_traffic_plot(benchmark_results) -> go.Figure:
             for i, (val, comp) in enumerate(zip(traffic_mb, component_labels)):
                 fig.add_trace(
                     go.Bar(
-                        name=f"{vname} — {comp}",
+                        name=comp,
                         x=[vname],
                         y=[val],
                         marker_color=_COLORS[vname],
-                        opacity=0.4 + 0.3 * i,
-                        legendgroup=comp,
-                        showlegend=(col_idx == 1),
+                        marker_pattern_shape=component_patterns[comp],
+                        opacity=component_opacity[comp],
+                        showlegend=False,
+                        customdata=[[vname, comp, val]],
+                        hovertemplate=(
+                            "Variant=%{customdata[0]}<br>"
+                            "Component=%{customdata[1]}<br>"
+                            "Traffic=%{customdata[2]:.2f} MB<extra></extra>"
+                        ),
                     ),
                     row=1, col=col_idx,
                 )
 
+    for comp in component_labels:
+        fig.add_trace(
+            go.Bar(
+                name=comp,
+                x=[None], y=[None],
+                marker_color="#6B7280",
+                marker_pattern_shape=component_patterns[comp],
+                opacity=component_opacity[comp],
+                showlegend=True,
+            )
+        )
+
     fig.update_layout(
         barmode="stack",
         title="DRAM Traffic Breakdown by Attention Variant",
-        yaxis_title="DRAM traffic (MB)",
+        yaxis=dict(title="DRAM traffic (MB)"),
         template="plotly_white",
+        legend_title_text="Component",
         width=900, height=450,
     )
     return fig
@@ -163,9 +215,17 @@ def latency_scaling_plot(benchmark_results) -> go.Figure:
         if not pts:
             continue
         color = _COLORS.get(vname, "#888")
+        # Use Timeloop-measured latency (cycles/clock) when available;
+        # fall back to the analytical roofline estimate for host-benchmark results.
+        ys = [
+            r.latency_ms
+            if (getattr(r, "metric_source", "host") == "timeloop" and r.latency_ms)
+            else r.fpga_latency_ms()
+            for r in pts
+        ]
         fig.add_trace(go.Scatter(
             x=[r.seq_len for r in pts],
-            y=[r.fpga_latency_ms() for r in pts],
+            y=ys,
             mode="lines+markers",
             name=vname,
             line=dict(color=color, width=2),
@@ -173,9 +233,9 @@ def latency_scaling_plot(benchmark_results) -> go.Figure:
         ))
 
     fig.update_layout(
-        title="Simulated FPGA Latency vs Sequence Length (200 GFLOP/s, 25.6 GB/s)",
+        title="Timeloop Latency vs Sequence Length",
         xaxis_title="Sequence Length (N)",
-        yaxis_title="Latency (ms)",
+        yaxis=dict(title="Latency (ms)", type="log"),
         template="plotly_white",
         legend=dict(x=0.01, y=0.99),
         width=700, height=450,
@@ -252,7 +312,7 @@ def timeloop_energy_plot(hw_stats: Dict[str, Dict]) -> go.Figure:
 # ── Convenience: generate all plots ──────────────────────────────────────────
 
 def compute_utilization_plot(cc_results: Dict) -> go.Figure:
-    from python.sparsity import ComputeStats
+    from python.conditional_compute import ComputeStats
 
     savings = cc_results["savings"]
     names = [s.name for s in savings]

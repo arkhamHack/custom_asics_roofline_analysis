@@ -1,12 +1,11 @@
 # Quantized (INT8) AV: scores (A) inline from SRAM, only V and output touch DRAM.
-# Tile footprint: A[128,64] + B[64,2] + Z[128,2] = 8.6 KB ≤ GlobalBuffer.
-# Factor check: M = 4×128 = 512 ✓  N = 8×64 = 512 ✓  K = 1×2×32 = 64 ✓
-# RegisterFile holds Z[1,32] = 32 INT8 elements = capacity exactly.
+# Uses the same 8-cluster × 8-PE spatial hierarchy as fpga_like.yaml.
+# Factor check: M = 8×8×8 = 512  N = 8×8×8 = 512  K = 64
 
 mapping:
   - target: DRAM
     type: temporal
-    factors: M4 N8 K1
+    factors: M8 N8 K1
     permutation: NMK
 
   - target: DRAM
@@ -15,8 +14,13 @@ mapping:
     bypass: [A]
 
   - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
     type: temporal
-    factors: M128 N64 K2
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
@@ -24,9 +28,24 @@ mapping:
     keep:   [A, B, Z]
     bypass: []
 
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
+
   - target: RegisterFile
     type: temporal
-    factors: M1 N1 K32
+    factors: M1 N1 K64
     permutation: KMN
 
   - target: RegisterFile

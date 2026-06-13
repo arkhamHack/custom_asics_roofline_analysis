@@ -1,9 +1,13 @@
-# Global-KV MoE QK^T — sparse queries, full-sequence keys
+# Windowed Local-KV MoE QK^T — sparse queries, windowed local keys
 #
-# One expert: routed queries attend over ALL key positions.
+# Routing: only routed query rows (M) are computed per expert.
+# Windowed KV: K matrix spans local window W (NOT full sequence).
 #   M = routed_queries  (default 128 = 512 seq × top-2 / 8 experts)
-#   N = seq_len         (global K — all tokens)
+#   N = window_size     (128 — constant, does not grow with seq_len)
 #   K = head_dim
+#
+# This gives O(N_seq) total complexity: the per-expert GEMM is [M_e, W]
+# and W is fixed. Compare to global-KV where N = seq_len → O(N²).
 #
 # Auto-regenerated at other (M, N, K) via hardware.py when seq_len changes.
 
@@ -26,5 +30,5 @@ problem:
           - [[N]]
         read_write: True
   M: 128
-  N: 512
+  N: 128
   K: 64

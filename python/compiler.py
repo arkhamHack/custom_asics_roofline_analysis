@@ -132,6 +132,30 @@ def _label_gemm(lhs, rhs, out, idx: int) -> str:
 
 # ── Top-level analysis ────────────────────────────────────────────────────────
 
+def _paged_attention_jitable(Q, K, V, page_size, n_pages_per_seq, page_table, page_alloc, seq_lens):
+    """JIT-compatible paged attention core (page table pre-built outside trace)."""
+    B, H, N, D = Q.shape
+    scale = 1.0 / jnp.sqrt(jnp.array(D, dtype=jnp.float32))
+    token_mask = jnp.arange(N)[None, :] < seq_lens[:, None]
+    scores = jnp.einsum("bhid,bhjd->bhij", Q, K) * scale
+    scores = jnp.where(token_mask[:, None, None, :], scores, jnp.finfo(scores.dtype).min)
+    attn_weights = jax.nn.softmax(scores, axis=-1)
+    output = jnp.einsum("bhij,bhjd->bhid", attn_weights, V)
+    output = jnp.where(token_mask[:, None, :, None], output, 0.0)
+    return output
+
+
+def _moe_attention_jitable(x_sample, moe_w):
+    """JIT-compatible MoE attention (skips stats that require numpy conversion)."""
+    from python.attention.moe_attention import _moe_attention_impl
+    scale = 1.0 / np.sqrt(x_sample.shape[-1])
+    output, _, _, _ = _moe_attention_impl(
+        x_sample, moe_w[0], moe_w[1], moe_w[2], moe_w[3], moe_w[4],
+        top_k=2, is_causal=True, scale=scale,
+    )
+    return output
+
+
 def analyze_attention_hlo(
     B: int = 2,
     H: int = 8,
@@ -145,12 +169,10 @@ def analyze_attention_hlo(
 
     Returns:
         {
-          "naive":     [GemmOp, ...],
           "flash":     [GemmOp, ...],
           "quantized": [GemmOp, ...],
         }
     """
-    from python.attention.naive import naive_attention
     from python.attention.flash import flash_attention
     from python.attention.quantize import quantized_attention
     from python.attention.paged_attention import paged_attention
@@ -161,15 +183,26 @@ def analyze_attention_hlo(
     x_sample = (sample[0] + sample[1] + sample[2]) / 3.0
     moe_w = make_attention_experts(8, H, D, jax.random.PRNGKey(0))
 
+    # Pre-compute paged attention's page table outside JIT (not traceable)
+    from python.attention.paged_attention import build_page_table
+    _page_size = 16
+    _seq_lens_np = np.full((B,), N, dtype=np.int32)
+    _n_pages_per_seq = (N + _page_size - 1) // _page_size
+    _max_pages = B * _n_pages_per_seq
+    _page_table, _page_alloc = build_page_table(
+        jnp.array(_seq_lens_np), _page_size, _max_pages
+    )
+
     variants = {
-        "naive":     naive_attention,
         "flash":     flash_attention,
         "quantized": lambda Q, K, V: quantized_attention(Q, K, V)[0],
-        "paged":     lambda Q, K, V: paged_attention(Q, K, V)[0],
-        "moe":       lambda Q, K, V: moe_attention(
-            x_sample, moe_w[0], moe_w[1], moe_w[2], moe_w[3], moe_w[4],
-            top_k=2, is_causal=True,
-        )[0],
+        "paged":     lambda Q, K, V: _paged_attention_jitable(
+            Q, K, V, _page_size, _n_pages_per_seq, _page_table, _page_alloc,
+            jnp.array(_seq_lens_np),
+        ),
+        "moe":       lambda Q, K, V: _moe_attention_jitable(
+            x_sample, moe_w,
+        ),
     }
 
     results = {}

@@ -1,8 +1,11 @@
-# Global-KV MoE AV — sparse queries, full-sequence values
+# Windowed Local-KV MoE AV — sparse queries, windowed local values
 #
 #   M = routed_queries  (sparse output rows)
-#   N = seq_len         (global V — all tokens)
+#   N = window_size     (128 — local V, NOT full sequence)
 #   K = head_dim
+#
+# Per-expert GEMM: [M_e, W] × [W, D] → [M_e, D]
+# Total complexity: O(N_seq * top_k * W * D) = O(N_seq) since W is constant.
 
 problem:
   shape:
@@ -23,5 +26,5 @@ problem:
           - [[K]]
         read_write: True
   M: 128
-  N: 512
+  N: 128
   K: 64

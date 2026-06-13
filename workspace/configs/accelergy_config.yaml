@@ -1,0 +1,7 @@
+version: 0.4
+estimator_plug_ins:
+  - /usr/local/share/accelergy/estimation_plug_ins/accelergy-aladdin-plug-in
+  - /usr/local/share/accelergy/estimation_plug_ins/accelergy-cacti-plug-in
+  - /usr/local/share/accelergy/estimation_plug_ins/accelergy-library-plugin
+primitive_components:
+  - /usr/local/share/accelergy/primitive_component_libs

@@ -1,38 +1,78 @@
 architecture:
-  version: 0.3
+  version: 0.4
+
   subtree:
-    - name: fpga_system
+  - name: system
+    attributes:
+      technology: "45nm"
+      global_cycle_seconds: 2e-9   # 500 MHz
+
+    local:
+
+    - name: DRAM
+      class: DRAM
+      attributes:
+        type: "LPDDR4"
+        width: 256
+        word_bits: 8
+        block_size: 32
+        read_bandwidth: 12.8
+        write_bandwidth: 12.8
+        technology: "45nm"
+
+    - name: GlobalBuffer
+      class: SRAM
+      attributes:
+        technology: "45nm"
+        width: 256
+        depth: 32768
+        datawidth: 8
+        word_bits: 8
+        block_size: 32
+        n_rdwr_ports: 2
+        n_banks: 4
+
+    subtree:
+
+    - name: Cluster[0..7]
+
       local:
-      
-        - name: DRAM
-          class: DRAM
-          attributes:
-            type: LPDDR4
-            workd_bits: 8           # INT8 elements
-            block_size: 16          # 16 elements per access = 16 bytes
-            bandwidth: 25.6        # GB/s  (typical LPDDR4x)
-        - name: GlobalBuffer
-          class: SRAM
-          attributes:
-            technology: "45nm"
-            width: 64              # 64-bit read/write bus (8 × INT8)
-            depth: 32768           # 32768 × 8 × 1 byte =
-            datawidth: 8
-            word_bits: 8
-            block_size: 8          # 8 elements per SRAM access
-            n_rdwr_ports: 2
+
+      - name: ClusterBuffer
+        class: SRAM
+        attributes:
+          technology: "45nm"
+          width: 128
+          depth: 1024
+          datawidth: 8
+          word_bits: 8
+          block_size: 16
+          n_rdwr_ports: 2
+          n_banks: 2
+
+      subtree:
+
+      - name: PE[0..7]
+
+        local:
+
         - name: RegisterFile
           class: regfile
           attributes:
             technology: "45nm"
-            depth: 16              # 16 × INT8 = 16 bytes
-            width: 16
+            depth: 256
+            width: 8
             datawidth: 8
             word_bits: 8
+            block_size: 1
             n_rdwr_ports: 2
+
         - name: MAC
           class: intmac
           attributes:
             technology: "45nm"
             datawidth: 8
+            width: 8
             word_bits: 8
+
+clock_frequency_mhz: 500

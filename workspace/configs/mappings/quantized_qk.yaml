@@ -1,12 +1,12 @@
 # Quantized (INT8) QK^T: flash-style, scores never hit DRAM.
-# INT8 allows 2× larger tiles: A[128,64] + B[128,64] + Z[128,128] = 32 KB ≤ GlobalBuffer.
-# Factor check: M = 4×128 = 512 ✓  N = 4×128 = 512 ✓  K = 64 ✓
+# Uses the same 8-cluster × 8-PE spatial hierarchy as fpga_like.yaml.
+# Factor check: M = 8×8×8 = 512  N = 8×8×8 = 512  K = 64
 
 mapping:
   # ── DRAM level ──────────────────────────────────────────────────────────
   - target: DRAM
     type: temporal
-    factors: M4 N4 K1
+    factors: M8 N8 K1
     permutation: MNK
 
   - target: DRAM
@@ -16,13 +16,34 @@ mapping:
 
   # ── GlobalBuffer level ──────────────────────────────────────────────────
   - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
+
+  - target: GlobalBuffer
     type: temporal
-    factors: M128 N128 K1
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
     type: datatype
     keep:   [A, B, Z]      # Q tile + K tile + score tile all in 32KB SRAM
+    bypass: []
+
+  # ── ClusterBuffer level ─────────────────────────────────────────────────
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
+    keep:   [A, B, Z]
     bypass: []
 
   # ── RegisterFile level ──────────────────────────────────────────────────

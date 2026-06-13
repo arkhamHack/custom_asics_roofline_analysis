@@ -10,12 +10,17 @@ mapping:
 
   - target: DRAM
     type: datatype
-    keep:   [A, B, Z]
-    bypass: []
+    keep:   [A, B]
+    bypass: [Z]
+
+  - target: GlobalBuffer
+    type: spatial
+    factors: M8 N1 K1
+    permutation: MNK
 
   - target: GlobalBuffer
     type: temporal
-    factors: M64 N64 K1
+    factors: M1 N1 K1
     permutation: MNK
 
   - target: GlobalBuffer
@@ -23,6 +28,20 @@ mapping:
     keep:   [A, B, Z]
     bypass: []
 
+  - target: ClusterBuffer
+    type: spatial
+    factors: M1 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: temporal
+    factors: M8 N8 K1
+    permutation: MNK
+
+  - target: ClusterBuffer
+    type: datatype
+    keep:   [A, B, Z]
+    bypass: []
 
   - target: RegisterFile
     type: temporal

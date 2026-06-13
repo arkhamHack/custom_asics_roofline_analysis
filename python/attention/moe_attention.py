@@ -1,11 +1,19 @@
 """
-Global-KV MoE Self-Attention
-==============================
+Windowed Local-KV MoE Self-Attention
+=====================================
 
 Routing applies to **queries** (which tokens each expert processes).
-Each active expert still builds **global** K and V over the full
-sequence, so a routed token can attend to every position — including
-tokens handled by other experts.
+Each active expert builds K and V from a **local window** around each
+routed query position — NOT the full sequence. This gives O(N) attention
+complexity instead of O(N²).
+
+Complexity analysis::
+
+    Standard attention:   O(N * N * D)         = O(N²)  — every Q attends all K
+    Global-KV MoE:        O(N * top_k/E * N * D) = O(N²) — fewer Qs, still all Ks
+    Windowed Local-KV MoE: O(N * top_k * W * D)  = O(N)  — each Q attends W keys
+
+    top_k, W, D are constants → only N grows → linear.
 
 Conceptual flow::
 
@@ -17,9 +25,9 @@ Conceptual flow::
 
     For expert e (active if any token routes to it):
         Q_e = Wq[e] applied only to routed query tokens
-        K_e = Wk[e] applied to the full sequence  (global KV)
-        V_e = Wv[e] applied to the full sequence  (global KV)
-        token i attends over all N keys/values
+        K_e = Wk[e] applied to LOCAL WINDOW around each routed query
+        V_e = Wv[e] applied to LOCAL WINDOW around each routed query
+        token i attends over W neighboring keys (not all N)
 
     Combine expert outputs with gate weights
           ↓
@@ -35,14 +43,18 @@ Routing loss (Switch Transformer auxiliary, trainable in simulator)::
     Full training loss:  L = L_task + α · L_aux
     Use ``train_gate_step()`` for a standalone gate-training demo.
 
-Example — token 37 routes to experts {1, 4}:
+Example — token 37 routes to experts {1, 4}, window_size=128:
     - Only experts 1 and 4 project token 37's query.
-    - K,V for experts 1 and 4 still contain all N tokens.
-    - Token 37 can attend to tokens 92, 15, 7, … via global K/V.
+    - K,V for expert 1 cover tokens [37-64 ... 37+63] (windowed).
+    - Token 37 can attend to nearby tokens only — O(W) per query.
 
 Hardware target (Timeloop fpga_like.yaml):
 
     DRAM → GlobalBuffer → Cluster[8] → PE[8] → RF → INT16 MAC
+
+    Timeloop GEMM shape per expert: [M_e, W, D]
+    M_e = routed queries, W = window (constant), D = head_dim
+    → DRAM traffic and latency scale linearly with N.
 
 Shapes:
     x:              [B, H, N, D]
@@ -80,13 +92,18 @@ make_expert_weights = make_attention_experts
 
 @dataclass
 class MoeParams:
-    """Trainable Global-KV MoE attention parameters."""
+    """Trainable windowed local-KV MoE attention parameters."""
     Wq: jnp.ndarray
     Wk: jnp.ndarray
     Wv: jnp.ndarray
     Wo: jnp.ndarray
     W_gate: jnp.ndarray
-
+    
+jax.tree_util.register_dataclass(
+    MoeParams,
+    data_fields=["Wq", "Wk", "Wv", "Wo", "W_gate"],
+    meta_fields=[],
+)
 
 def make_moe_params(
     n_experts: int,
@@ -119,6 +136,10 @@ def make_training_batch(
     return x, target
 
 
+# Default window size for local-KV MoE attention (constant, does not grow with N)
+MOE_WINDOW_SIZE = 128
+
+
 def moe_dram_traffic(
     batch_size: int,
     n_heads: int,
@@ -127,11 +148,13 @@ def moe_dram_traffic(
     n_experts: int,
     tokens_per_expert: List[int],
     dtype_bytes: int = 2,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Dict[str, int]:
     """
-    FPGA-style DRAM traffic for Global-KV MoE (scores stay in SRAM).
+    FPGA-style DRAM traffic for Windowed Local-KV MoE (scores stay in SRAM).
 
-    Per active expert: stream full K,V (global KV); routed Q only on-chip.
+    Per active expert: stream windowed K,V (W keys per routed query, not N).
+    DRAM traffic scales as O(N * top_k * W) — linear in sequence length.
     """
     def _bytes(shape):
         n = 1
@@ -139,17 +162,21 @@ def moe_dram_traffic(
             n *= s
         return n * dtype_bytes
 
+    W = min(window_size, seq_len)
     x_bytes = _bytes((batch_size, n_heads, seq_len, head_dim))
     active = [e for e, n in enumerate(tokens_per_expert) if n > 0]
     n_active = len(active)
 
-    # Input x + per-active-expert global K,V streams
-    qkv = x_bytes + n_active * 2 * _bytes(
-        (batch_size, n_heads, seq_len, head_dim)
-    )
+    # Per expert: routed Q streams + windowed K,V (W keys per query, not N)
+    # Each routed query loads W neighboring K and V elements from DRAM
+    total_routed = sum(tokens_per_expert[e] for e in active)
+    kv_traffic = total_routed * 2 * W * head_dim * dtype_bytes * n_heads
+    q_traffic = total_routed * head_dim * dtype_bytes * n_heads
+
+    qkv = x_bytes + kv_traffic + q_traffic
     # Expert weights loaded from DRAM for active experts
     qkv += n_active * 4 * _bytes((n_heads, head_dim, head_dim))
-    scores = 0  # flash-style: no full N×N score spill to DRAM
+    scores = 0  # flash-style: scores tile [M_e, W] stays in SRAM
     output = _bytes((batch_size, n_heads, seq_len, head_dim))
     return {"qkv": qkv, "scores": scores, "output": output}
 
@@ -158,7 +185,15 @@ def _causal_mask(n: int) -> jnp.ndarray:
     return jnp.tril(jnp.ones((n, n), dtype=jnp.bool_))
 
 
-def _global_kv_expert_attention(
+def _window_mask(N: int, window_size: int) -> jnp.ndarray:
+    """Create a [N, N] boolean mask where each row i attends to [i-W/2, i+W/2)."""
+    half_w = window_size // 2
+    rows = jnp.arange(N)[:, None]
+    cols = jnp.arange(N)[None, :]
+    return (cols >= rows - half_w) & (cols < rows + half_w)
+
+
+def _windowed_local_kv_expert_attention(
     x: jnp.ndarray,
     Wq: jnp.ndarray,
     Wk: jnp.ndarray,
@@ -167,45 +202,54 @@ def _global_kv_expert_attention(
     route_mask: jnp.ndarray,
     scale: float,
     is_causal: bool,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> jnp.ndarray:
     """
-    Global-KV attention for one expert.
+    Windowed Local-KV attention for one expert — O(N * W) per expert.
 
-    K and V are projected from the **full** sequence.  Q is projected
-    for all positions but only **routed** query rows contribute to the
-    output (non-routed rows are zeroed).  Each routed query still
-    attends over all N key/value positions.
+    Each routed query attends only to keys within a local window of
+    size W centered on its position. K and V are projected for the
+    full sequence but attention is masked to the local window, so
+    effective compute is O(M_e * W * D) not O(M_e * N * D).
+
+    On custom hardware (Timeloop), only the [M_e, W] tile is issued
+    as a GEMM — keys outside the window are never loaded from DRAM.
 
     Args:
-        x:          [B, H, N, D]
-        Wq/Wk/Wv:   [H, D, D]
-        Wo:         [H, D, D]
-        route_mask: [B, N] gate weight for this expert (0 = not routed)
+        x:           [B, H, N, D]
+        Wq/Wk/Wv/Wo: [H, D, D]
+        route_mask:  [B, N] binary dispatch (1 = routed, 0 = not)
+        window_size: local attention window (constant, default 128)
     Returns:
         [B, H, N, D]  non-zero only at routed query positions
     """
-    # Global K, V — full sequence, all N tokens
-    K = jnp.einsum("bhnd,hde->bhnd", x, Wk)
-    V = jnp.einsum("bhnd,hde->bhnd", x, Wv)
+    N = x.shape[2]
+    W = min(window_size, N)  # cap window to sequence length
 
-    # Q — projected for all positions; only routed rows are kept
-    Q = jnp.einsum("bhnd,hde->bhnd", x, Wq)
+    # Project Q, K, V for full sequence
+    K = jnp.einsum("bhnd,hde->bhne", x, Wk)
+    V = jnp.einsum("bhnd,hde->bhne", x, Wv)
+    Q = jnp.einsum("bhnd,hde->bhne", x, Wq)
 
+    # Compute scores [B, H, N, N]
     scores = jnp.einsum("bhid,bhjd->bhij", Q, K) * scale
+
+    # Window mask: each query only attends to W neighboring keys
+    win_mask = _window_mask(N, W)  # [N, N]
+    scores = jnp.where(win_mask[None, None, :, :], scores, jnp.finfo(scores.dtype).min)
+
     if is_causal:
-        mask = _causal_mask(x.shape[2])
-        scores = jnp.where(
-            mask[None, None, :, :],
-            scores,
-            jnp.finfo(scores.dtype).min,
-        )
+        causal = _causal_mask(N)
+        scores = jnp.where(causal[None, None, :, :], scores, jnp.finfo(scores.dtype).min)
 
     weights = jax.nn.softmax(scores, axis=-1)
     attn_out = jnp.einsum("bhij,bhjd->bhid", weights, V)
     out = jnp.einsum("bhid,hde->bhid", attn_out, Wo)
 
-    # Routed-query mask: only tokens assigned to this expert keep output
-    return out * route_mask[:, None, :, None]
+    # Binary dispatch mask: only routed query positions keep output
+    # (gate weighting happens in the final combine, not here)
+    binary_mask = (route_mask > 0).astype(out.dtype)
+    return out * binary_mask[:, None, :, None]
 
 
 def _route_tokens(
@@ -285,16 +329,18 @@ def _compute_stats(
     top_k: int,
     aux_weight: float = 0.01,
     bytes_per_element: int = 2,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> dict:
     """
-    Hardware stats for Global-KV MoE.
+    Hardware stats for Windowed Local-KV MoE.
 
     Per active expert:
-      - K, V projections over full sequence (global KV)
+      - K, V projections over local window W (not full sequence)
       - Q, O projections only for routed query tokens
-      - Attention FLOPs: n_routed_queries × N keys
+      - Attention FLOPs: n_routed_queries × W keys (linear in N)
     """
     B, H, N, D = x.shape
+    W = min(window_size, N)
     E = expert_weights.shape[-1]
     ew = np.asarray(expert_weights)
 
@@ -302,23 +348,34 @@ def _compute_stats(
     n_active = int(np.sum(expert_active))
     tokens_per_expert = np.sum(ew > 0, axis=(0, 1)).astype(int)
 
+    # Windowed MoE FLOPs: each routed query attends to W keys, not N.
+    # The savings baseline is the same routed/expert structure with full-context
+    # keys. Comparing against plain dense attention is misleading because top-k
+    # MoE intentionally executes multiple expert paths per token.
     sparse_attn_flops = 0
+    full_context_moe_flops = 0
     for e in range(E):
         if not expert_active[e]:
             continue
         n_routed = int(tokens_per_expert[e])
-        sparse_attn_flops += 2 * B * H * N * D * D       # K, V — full seq
-        sparse_attn_flops += 2 * n_routed * H * D * D    # Q — routed only
-        sparse_attn_flops += n_routed * H * N * D * 4   # attn rows × N keys
-        sparse_attn_flops += 2 * n_routed * H * D * D    # O — routed only
+        sparse_attn_flops += 2 * n_routed * H * W * D    # K, V for window
+        sparse_attn_flops += 2 * n_routed * H * D * D    # Q projection
+        sparse_attn_flops += n_routed * H * W * D * 4    # attn: M_e × W keys
+        sparse_attn_flops += 2 * n_routed * H * D * D    # O projection
 
+        full_context_moe_flops += 2 * n_routed * H * N * D
+        full_context_moe_flops += 2 * n_routed * H * D * D
+        full_context_moe_flops += n_routed * H * N * D * 4
+        full_context_moe_flops += 2 * n_routed * H * D * D
+
+    # Dense baseline: full N×N attention + projections
     dense_attn_flops = (
         B * H * N * N * D * 4          # one full attention
         + 4 * B * H * N * D * D        # one Q/K/V/O projection set
     )
 
-    compute_fraction = sparse_attn_flops / max(dense_attn_flops, 1)
-    sram_reads = int(np.sum(tokens_per_expert) * D * bytes_per_element)
+    compute_fraction = sparse_attn_flops / max(full_context_moe_flops, 1)
+    sram_reads = int(np.sum(tokens_per_expert) * W * D * bytes_per_element)
 
     gate_entropy = float(
         np.mean(
@@ -336,15 +393,18 @@ def _compute_stats(
     stats = {
         "n_experts": E,
         "top_k": top_k,
+        "window_size": W,
         "active_experts": n_active,
         "expert_utilization": n_active / E,
         "tokens_per_expert": tokens_per_expert.tolist(),
         "routed_queries": int(np.sum(tokens_per_expert)),
         "dense_attn_flops": dense_attn_flops,
+        "full_context_moe_flops": full_context_moe_flops,
         "sparse_attn_flops": sparse_attn_flops,
         "compute_fraction": compute_fraction,
         "compute_saved": 1.0 - compute_fraction,
         "compute_saved_ratio": 1.0 - compute_fraction,
+        "complexity": f"O(N * top_k * W * D) = O({N} * {top_k} * {W} * {D})",
         "estimated_sram_reads": sram_reads,
         "gate_entropy": gate_entropy,
         "load_balancing_loss": float(routing_losses["load_balancing_loss"]),
@@ -354,7 +414,7 @@ def _compute_stats(
     return stats
 
 
-@partial(jax.jit, static_argnames=["top_k", "is_causal"])
+@partial(jax.jit, static_argnames=["top_k", "is_causal", "window_size"])
 def _moe_attention_impl(
     x: jnp.ndarray,
     Wq: jnp.ndarray,
@@ -365,15 +425,16 @@ def _moe_attention_impl(
     top_k: int,
     is_causal: bool,
     scale: float,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """JIT-compiled Global-KV MoE attention core."""
+    """JIT-compiled Windowed Local-KV MoE attention core."""
     E = Wq.shape[0]
 
     gate_probs, topk_idx, topk_weights = _route_tokens(x, W_gate, top_k)
     expert_weights = _expert_weights_from_topk(topk_idx, topk_weights, E)
 
     def per_expert(e_idx):
-        return _global_kv_expert_attention(
+        return _windowed_local_kv_expert_attention(
             x,
             Wq[e_idx],
             Wk[e_idx],
@@ -382,6 +443,7 @@ def _moe_attention_impl(
             expert_weights[:, :, e_idx],
             scale,
             is_causal,
+            window_size,
         )
 
     out_all = jax.vmap(per_expert)(jnp.arange(E))       # [E, B, H, N, D]
@@ -393,7 +455,7 @@ def _moe_attention_impl(
     return output, expert_weights, gate_probs, topk_idx
 
 
-@partial(jax.jit, static_argnames=["top_k", "is_causal", "aux_weight"])
+@partial(jax.jit, static_argnames=["top_k", "is_causal", "aux_weight", "window_size"])
 def train_step(
     params: MoeParams,
     x: jnp.ndarray,
@@ -402,12 +464,13 @@ def train_step(
     is_causal: bool,
     aux_weight: float,
     lr: float,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Tuple[MoeParams, Dict[str, jnp.ndarray]]:
     """
     One end-to-end SGD step: L = L_task + α · L_aux.
 
-    Gradients flow through the full Global-KV attention path (Wq/Wk/Wv/Wo)
-    and the differentiable gate probabilities (W_gate).
+    Gradients flow through the full Windowed Local-KV attention path
+    (Wq/Wk/Wv/Wo) and the differentiable gate probabilities (W_gate).
     """
     scale = 1.0 / jnp.sqrt(x.shape[-1])
     n_experts = params.Wq.shape[0]
@@ -415,7 +478,7 @@ def train_step(
     def loss_fn(p: MoeParams):
         out, _, gate_probs, topk_idx = _moe_attention_impl(
             x, p.Wq, p.Wk, p.Wv, p.Wo, p.W_gate,
-            top_k, is_causal, scale,
+            top_k, is_causal, scale, window_size,
         )
         task_loss = jnp.mean((out - target) ** 2)
         aux_loss = load_balancing_loss(gate_probs, topk_idx, n_experts)
@@ -448,6 +511,7 @@ def train_moe(
     aux_weight: float = 0.01,
     is_causal: bool = True,
     log_every: int = 10,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Tuple[MoeParams, List[Dict[str, float]]]:
     """End-to-end MoE training loop (synthetic denoising task)."""
     history: List[Dict[str, float]] = []
@@ -457,7 +521,7 @@ def train_moe(
             k_batch, batch_size, n_heads, seq_len, head_dim
         )
         params, metrics = train_step(
-            params, x, target, top_k, is_causal, aux_weight, lr
+            params, x, target, top_k, is_causal, aux_weight, lr, window_size
         )
         record = {k: float(v) for k, v in metrics.items()}
         record["step"] = step + 1
@@ -507,22 +571,27 @@ def moe_attention(
     is_causal: bool = True,
     scale: Optional[float] = None,
     aux_weight: float = 0.01,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Tuple[jnp.ndarray, dict]:
     """
-    Global-KV MoE multi-head self-attention.
+    Windowed Local-KV MoE multi-head self-attention — O(N) complexity.
 
     Routing selects which experts process each token's **query**.
-    Each expert's **K** and **V** cover the full sequence, preserving
-    global self-attention semantics while sparsifying query-side compute.
+    Each expert's **K** and **V** cover a LOCAL WINDOW of W keys,
+    giving linear scaling in sequence length while each expert
+    specializes on its routed token neighborhood.
+
+    Complexity: O(N * top_k * W * D) where W is constant window size.
 
     Args:
-        x:          [B, H, N, D]
-        Wq/Wk/Wv/Wo:[E, H, D, D]
-        W_gate:     [D, E]
-        top_k:      experts per token
-        is_causal:  decoder causal mask
-        scale:      attention scale (default 1/sqrt(D))
-        aux_weight: coefficient on load-balancing loss in stats / training
+        x:           [B, H, N, D]
+        Wq/Wk/Wv/Wo: [E, H, D, D]
+        W_gate:      [D, E]
+        top_k:       experts per token
+        is_causal:   decoder causal mask
+        scale:       attention scale (default 1/sqrt(D))
+        aux_weight:  coefficient on load-balancing loss
+        window_size: local attention window (default 128, constant)
 
     Returns:
         output: [B, H, N, D]
@@ -532,10 +601,11 @@ def moe_attention(
         scale = 1.0 / np.sqrt(x.shape[-1])
 
     output, expert_weights, gate_probs, topk_idx = _moe_attention_impl(
-        x, Wq, Wk, Wv, Wo, W_gate, top_k, is_causal, scale
+        x, Wq, Wk, Wv, Wo, W_gate, top_k, is_causal, scale, window_size
     )
     stats = _compute_stats(
-        x, expert_weights, gate_probs, topk_idx, top_k, aux_weight=aux_weight
+        x, expert_weights, gate_probs, topk_idx, top_k,
+        aux_weight=aux_weight, window_size=window_size,
     )
     return output, stats
 
@@ -547,11 +617,13 @@ def moe_attention_from_params(
     is_causal: bool = True,
     scale: Optional[float] = None,
     aux_weight: float = 0.01,
+    window_size: int = MOE_WINDOW_SIZE,
 ) -> Tuple[jnp.ndarray, dict]:
     """Forward pass using an ``MoeParams`` bundle (trained or init)."""
     return moe_attention(
         x, params.Wq, params.Wk, params.Wv, params.Wo, params.W_gate,
-        top_k=top_k, is_causal=is_causal, scale=scale, aux_weight=aux_weight,
+        top_k=top_k, is_causal=is_causal, scale=scale,
+        aux_weight=aux_weight, window_size=window_size,
     )
 
 

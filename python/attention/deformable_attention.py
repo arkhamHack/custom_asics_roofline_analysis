@@ -16,7 +16,6 @@ FPGA adaptation:
          K and V block means precomputed → sequential DMA, register-file lookup
 
 Memory traffic (N=512, D=64, n_points=4, FP16):
-  Naive:  score = 512×512×2×2 = 1 MB  (write + read full N×N)
   Flash:  score = 0 KB DRAM            (tiles in SRAM)
   DSA:    """
 import numpy as np

@@ -1,0 +1,92 @@
+# Pre-computed Energy Reference Table for fpga_like.yaml architecture
+# Values sourced from Aladdin 45nm tables and CACTI 45nm SRAM/DRAM models
+# Architecture: 8 Clusters × 8 PEs = 64 MACs, 500 MHz, LPDDR4 25.6 GB/s
+#
+# Component specs:
+#   MAC:           intmac, 16-bit, 45nm
+#   RegisterFile:  regfile, depth=256, width=16, 45nm
+#   ClusterBuffer: SRAM, depth=1024, width=128, 45nm
+#   GlobalBuffer:  SRAM, depth=32768, width=256, 45nm
+#   DRAM:          LPDDR4, width=256, 45nm
+ERT:
+  version: '0.4'
+  tables:
+  - name: system.Cluster[0..7].PE[0..7].MAC
+    actions:
+    - name: compute
+      arguments: null
+      energy: 0.298
+    - name: idle
+      arguments: null
+      energy: 0.006
+    - name: leak
+      arguments: null
+      energy: 0.003
+  - name: system.Cluster[0..7].PE[0..7].RegisterFile
+    actions:
+    - name: read
+      arguments: null
+      energy: 0.146
+    - name: write
+      arguments: null
+      energy: 0.160
+    - name: update
+      arguments: null
+      energy: 0.160
+    - name: idle
+      arguments: null
+      energy: 0.006
+    - name: leak
+      arguments: null
+      energy: 0.003
+  - name: system.Cluster[0..7].ClusterBuffer
+    actions:
+    - name: read
+      arguments: null
+      energy: 2.464
+    - name: write
+      arguments: null
+      energy: 2.696
+    - name: update
+      arguments: null
+      energy: 2.696
+    - name: idle
+      arguments: null
+      energy: 0.052
+    - name: leak
+      arguments: null
+      energy: 0.025
+  - name: system.GlobalBuffer
+    actions:
+    - name: read
+      arguments: null
+      energy: 17.872
+    - name: write
+      arguments: null
+      energy: 19.540
+    - name: update
+      arguments: null
+      energy: 19.540
+    - name: idle
+      arguments: null
+      energy: 0.384
+    - name: leak
+      arguments: null
+      energy: 0.192
+  - name: system.DRAM
+    actions:
+    - name: read
+      arguments: null
+      energy: 512.0
+    - name: write
+      arguments: null
+      energy: 512.0
+    - name: update
+      arguments: null
+      energy: 512.0
+    - name: idle
+      arguments: null
+      energy: 0.0
+    - name: leak
+      arguments: null
+      energy: 0.0
