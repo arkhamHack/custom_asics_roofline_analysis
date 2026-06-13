@@ -15,47 +15,6 @@ Complexity analysis::
 
     top_k, W, D are constants → only N grows → linear.
 
-Conceptual flow::
-
-    Input tokens x [B, H, N, D]
-          ↓
-    Router (per-token top-k gate)
-          ↓
-    Token i → experts {e1, e2, …}
-
-    For expert e (active if any token routes to it):
-        Q_e = Wq[e] applied only to routed query tokens
-        K_e = Wk[e] applied to LOCAL WINDOW around each routed query
-        V_e = Wv[e] applied to LOCAL WINDOW around each routed query
-        token i attends over W neighboring keys (not all N)
-
-    Combine expert outputs with gate weights
-          ↓
-    Residual add → output [B, H, N, D]
-
-Routing loss (Switch Transformer auxiliary, trainable in simulator)::
-
-    L_aux = E · Σ_i  f_i · P_i
-
-    f_i — hard top-k dispatch fraction (stop-gradient)
-    P_i — mean softmax gate probability for expert i
-
-    Full training loss:  L = L_task + α · L_aux
-    Use ``train_gate_step()`` for a standalone gate-training demo.
-
-Example — token 37 routes to experts {1, 4}, window_size=128:
-    - Only experts 1 and 4 project token 37's query.
-    - K,V for expert 1 cover tokens [37-64 ... 37+63] (windowed).
-    - Token 37 can attend to nearby tokens only — O(W) per query.
-
-Hardware target (Timeloop fpga_like.yaml):
-
-    DRAM → GlobalBuffer → Cluster[8] → PE[8] → RF → INT16 MAC
-
-    Timeloop GEMM shape per expert: [M_e, W, D]
-    M_e = routed queries, W = window (constant), D = head_dim
-    → DRAM traffic and latency scale linearly with N.
-
 Shapes:
     x:              [B, H, N, D]
     Wq,Wk,Wv,Wo:    [E, H, D, D]
